@@ -52,7 +52,7 @@ cd /d/jev-chat-jarvis-ios
 git remote add fork https://github.com/<你的用户名>/jev-chat-jarvis-ios.git
 git add .github/workflows/build-ios-unsigned.yml docs/CLOUD-BUILD.md
 git commit -m "ci: 云端编译未签名 ipa 的流水线（无 Mac 场景）"
-git push fork HEAD:main
+git push fork master
 ```
 
 > 推送时 Git 会弹出 GitHub 登录窗口，登一次即可。
@@ -65,7 +65,7 @@ Fork 出来的仓库 **Actions 默认是关的**：
 2. 会看到一条提示，点 **I understand my workflows, go ahead and enable them**
 3. 左侧列表里应出现 **Build iOS IPA (unsigned)**
 
-> 如果左侧啥都没有，说明 workflow 文件不在**默认分支**（这里是 `main`）上。`workflow_dispatch` 只认默认分支。
+> 如果左侧啥都没有，说明 workflow 文件不在**默认分支**（这个仓库是 `master`，不是 `main`）上。`workflow_dispatch` 只认默认分支。
 
 ## 4. 跑一次编译
 
@@ -131,7 +131,7 @@ Fork 出来的仓库 **Actions 默认是关的**：
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| Actions 页看不到 workflow | fork 没启用 Actions，或文件不在 `main` | 按第 3 步启用；确认文件在默认分支 |
+| Actions 页看不到 workflow | fork 没启用 Actions，或文件不在 `master` | 按第 3 步启用；确认文件在默认分支 |
 | 构建失败：`requires a provisioning profile` | 签名没关干净 | 用仓库里附带的 workflow 原样跑，别自己删 `CODE_SIGNING_ALLOWED=NO` |
 | 步骤「定位 .app」报找不到 | 产物路径和预期不一致 | workflow 里已有 fallback 搜索；仍失败就把 `build.log` 贴出来 |
 | 报「键盘扩展没被嵌入」 | 扩展 target 没被构建 | 把 `build.log` 给作者，这是工程层面的问题 |
