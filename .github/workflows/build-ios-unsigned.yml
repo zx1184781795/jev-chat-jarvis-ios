@@ -219,6 +219,33 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      # 免电脑签名（Feather / ESign / SideStore / TrollStore）都要求「ipa 先在手机上」。
+      # Actions 产物下载必须登录 GitHub，手机浏览器上很别扭；推到 builds 分支后
+      # 一条 raw 链接 Safari 直接就能下。
+      # continue-on-error：搬运文件失败不该把绿色构建搞红。
+      - name: 把 ipa 推到 builds 分支（手机端可直接下载）
+        if: success()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          OUT=/tmp/ipa-out
+          rm -rf "$OUT" && mkdir -p "$OUT"
+          cp JevJarvis-unsigned.ipa build-info.txt "$OUT"/
+          cd "$OUT"
+          git init -q
+          git checkout -q -b builds
+          git config user.name "ci-build"
+          git config user.email "ci-build@users.noreply.github.com"
+          git add -A
+          git commit -q -m "build: ${GITHUB_SHA:0:8}"
+          git push -f -q \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" builds
+          echo "已推送 ipa 到 builds 分支（每次覆盖，只保留最新一份）"
+          echo "手机 Safari 直接打开这个地址即可下载："
+          echo "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/builds/JevJarvis-unsigned.ipa"
+
       # 没有 Mac 的人看不到 Actions 日志（下载日志要登录 GitHub）。
       # 把日志推回一个分支，任何人一条 curl 就能读，排查不用来回问。
       # continue-on-error：这一步纯粹是搬运日志，绝不能因为它把绿色的构建搞红。
