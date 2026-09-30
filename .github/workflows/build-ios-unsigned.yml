@@ -122,26 +122,26 @@ jobs:
             local label="$1"; shift
             mark ""
             mark "########## 编译尝试：${label} ##########"
-            mark "########## 命令：xcodebuild -project JevJarvis.xcodeproj -sdk iphoneos -configuration ${CONFIG} -derivedDataPath build/dd CODE_SIGNING_ALLOWED=NO $* build"
+            mark "########## xcodebuild -project JevJarvis.xcodeproj -sdk iphoneos -configuration ${CONFIG} CODE_SIGNING_ALLOWED=NO $* build"
             xcodebuild -project JevJarvis.xcodeproj -sdk iphoneos \
               -configuration "${CONFIG}" \
-              -derivedDataPath build/dd \
               CODE_SIGNING_ALLOWED=NO \
               "$@" build >> build.log 2>&1
           }
 
-          # 尝试 1：作者 README / AGENTS.md 里验证过的写法
-          if attempt "作者官方写法（-target + generic destination）" \
-               -target JevJarvis -destination 'generic/platform=iOS'; then
-            mark ">>> 结果：编译成功 —— 作者官方写法（-target）"
-          # 尝试 2：改用共享 scheme（.xcodeproj 里有 xcshareddata/xcschemes）
-          elif attempt "共享 scheme（-scheme JevJarvis，不带 destination）" -scheme JevJarvis; then
-            mark ">>> 结果：编译成功 —— 走的是 -scheme 回退，说明本 runner 上 -target 写法不可用"
-          # 尝试 3：scheme + destination
-          elif attempt "共享 scheme + generic destination" -scheme JevJarvis -destination 'generic/platform=iOS'; then
-            mark ">>> 结果：编译成功 —— 走的是 -scheme + destination 回退"
+          # 主命令：-scheme + -derivedDataPath。
+          # 注意别用 -target 配 -derivedDataPath —— xcodebuild 会直接报
+          # "The flag -scheme, -testProductsPath, or -xctestrun is required
+          #  when specifying -derivedDataPath"（2026-09-30 实测踩过）。
+          # -derivedDataPath 的好处是产物路径固定，后面定位 .app 不用猜 DerivedData。
+          if attempt "主命令：-scheme JevJarvis + -derivedDataPath build/dd" \
+               -scheme JevJarvis -derivedDataPath build/dd; then
+            mark ">>> 结果：编译成功（-scheme 主命令）"
+          # 兜底：作者 README / AGENTS.md 里的原始写法（-target，产物落在 DerivedData）
+          elif attempt "兜底：作者官方写法 -target JevJarvis" -target JevJarvis; then
+            mark ">>> 结果：编译成功（-target 兜底，产物在 DerivedData）"
           else
-            mark ">>> 结果：三种写法全部失败"
+            mark ">>> 结果：两种写法都失败"
             exit 1
           fi
 

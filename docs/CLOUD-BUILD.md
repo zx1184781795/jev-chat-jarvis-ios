@@ -8,6 +8,8 @@
 
 不需要 Mac、不需要 Apple 付费会员、不需要证书。
 
+> **已实测跑通（2026-09-30）**：fork 推送后流水线自动触发，macOS runner 73 秒完成编译，产出 450 KB 的未签名 ipa。构建信息（Bundle ID / App Group / SHA256）和完整编译日志会同步推到 `ci-log` 分支，Windows 侧一条 `curl` 就能读。下面第 6 步之后的 Sideloadly 签装步骤需要你在本机执行。
+
 > 本文档与 `.github/workflows/build-ios-unsigned.yml` 一起新增。原作者仓库不受影响，你只是在自己的 fork 里加了个流水线。
 
 ---
@@ -45,17 +47,23 @@
 
 ### 方式 B：命令行（本地已有 clone 时）
 
+> **这台机器上必须用 SSH，不能用 HTTPS。** 实测 `https://github.com/...` 的 git 通道被墙（`CONNECT tunnel failed, response 502`），而 **SSH over 443 畅通**（`ssh.github.com:443`）。本地已有注册在 GitHub 账号上的 SSH 密钥，直接就能用。
+
 把 `<你的用户名>` 换掉：
 
 ```bash
 cd /d/jev-chat-jarvis-ios
-git remote add fork https://github.com/<你的用户名>/jev-chat-jarvis-ios.git
+git remote add fork ssh://git@ssh.github.com:443/<你的用户名>/jev-chat-jarvis-ios.git
+# 免去手动维护 known_hosts（沙箱/受限环境下写不进去也没关系）
+git config --local core.sshCommand "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15"
 git add .github/workflows/build-ios-unsigned.yml docs/CLOUD-BUILD.md
 git commit -m "ci: 云端编译未签名 ipa 的流水线（无 Mac 场景）"
 git push fork master
 ```
 
-> 推送时 Git 会弹出 GitHub 登录窗口，登一次即可。
+> 不放心的话先自检：`ssh -T -p 443 git@ssh.github.com`。看到 `Hi <用户名>! You've successfully authenticated` 就说明通道和密钥都没问题。
+
+**推上去就会自动跑一次**：workflow 里带了 `on: push: paths: [.github/workflows/...]`，改了流水线文件就自动触发，不用去网页点。第一次跑可能是红的（见第 4 步的说明）。
 
 ## 3. 启用 Actions
 
@@ -71,7 +79,7 @@ Fork 出来的仓库 **Actions 默认是关的**：
 
 1. 左侧点 **Build iOS IPA (unsigned)** → 右侧 **Run workflow** → **Run workflow**
 2. 三个参数保持默认（见下方说明），点绿色按钮
-3. 等 **3~6 分钟**（首次会久一点），出现绿色 ✓ 就是成功
+3. 等 **1~2 分钟**（实测 73 秒），出现绿色 ✓ 就是成功
 
 | 参数 | 默认 | 作用 |
 |---|---|---|
@@ -92,6 +100,24 @@ Fork 出来的仓库 **Actions 默认是关的**：
 | `build.log` | 完整编译日志，失败时才有用 |
 
 > **这个 ipa 可以反复用。** 后面证书 7 天过期了，直接重新跑 Sideloadly 签一次就行，不用重新编译。
+
+### 没有 Mac 怎么读构建日志
+
+Actions 的日志下载**必须登录 GitHub**，命令行直接拉会 403。所以流水线每次都会把日志推到 fork 里的 **`ci-log` 分支**，用一条命令就能读，不用登录、不用人肉复制：
+
+```bash
+# 编译到底成功没有、走了哪条编译路径
+curl -s https://raw.githubusercontent.com/<你的用户名>/jev-chat-jarvis-ios/ci-log/build-info.txt
+
+# 真实报错（只看末尾 60 行）
+curl -s https://raw.githubusercontent.com/<你的用户名>/jev-chat-jarvis-ios/ci-log/build.log | tail -60
+
+# raw 域名如果连不上，改走 API（不用 token）
+curl -s "https://api.github.com/repos/<你的用户名>/jev-chat-jarvis-ios/contents/build.log?ref=ci-log" \
+  | python -c "import sys,json,base64;print(base64.b64decode(json.load(sys.stdin)['content']).decode('utf-8','replace'))" | tail -60
+```
+
+编译成功时日志末尾会有一行 `>>> 结果：编译成功（...）`，明确告诉你走的是哪条编译路径。遇到红叉时把这段尾巴贴出来就能定位问题。
 
 ## 6. Sideloadly 签名安装
 
@@ -132,9 +158,10 @@ Fork 出来的仓库 **Actions 默认是关的**：
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | Actions 页看不到 workflow | fork 没启用 Actions，或文件不在 `master` | 按第 3 步启用；确认文件在默认分支 |
+| 构建失败：`xcodebuild: error: The flag -scheme, -testProductsPath, or -xctestrun is required when specifying -derivedDataPath` | 改流水线时把 `-target` 和 `-derivedDataPath` 写在了一起，xcodebuild 不允许这对组合 | 已修：主命令用 `-scheme JevJarvis -derivedDataPath build/dd`。自己改的话，二者只能选一条路 |
 | 构建失败：`requires a provisioning profile` | 签名没关干净 | 用仓库里附带的 workflow 原样跑，别自己删 `CODE_SIGNING_ALLOWED=NO` |
-| 步骤「定位 .app」报找不到 | 产物路径和预期不一致 | workflow 里已有 fallback 搜索；仍失败就把 `build.log` 贴出来 |
-| 报「键盘扩展没被嵌入」 | 扩展 target 没被构建 | 把 `build.log` 给作者，这是工程层面的问题 |
+| 步骤「定位 .app」报找不到 | 产物路径和预期不一致 | 走 `-scheme` 时在 `build/dd/Build/Products`，走 `-target` 兜底时在 `DerivedData`；workflow 里两种都搜了。仍失败就把 `build.log` 贴出来 |
+| 报「键盘扩展没被嵌入」 | 扩展 target 没被构建 | 把 `build.log` 给作者，这是工程层面的问题。`build.log` 在 `ci-log` 分支上能直接 curl 到 |
 | Sideloadly：`This app ID is not available` / 注册 Bundle ID 失败 | 原 Bundle ID 已被作者注册 | 重跑 workflow，确认 `uniquify_bundle_id` 是**开**的 |
 | 装完 App 打不开、图标灰 | 证书没信任，或已过 7 天 | 先去设置里信任；过期就重新 Sideloadly 签一次 |
 | 键盘列表里找不到 Jev 键盘 | 键盘扩展没添加 | 设置 → 通用 → 键盘 → 添加新键盘 |
