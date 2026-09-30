@@ -1,0 +1,193 @@
+name: Build iOS IPA (unsigned)
+
+# 给没有 Mac 的人用：在 GitHub 的 macOS runner 上编译出未签名 ipa，
+# 再拿回 Windows 用 Sideloadly 签上自己的 Apple ID 装进 iPhone。
+#
+# 不做任何签名/公证，因此不需要证书、不需要 Apple 账号、不需要付费会员。
+
+on:
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: 构建配置
+        type: choice
+        options:
+          - Release
+          - Debug
+        default: Release
+      uniquify_bundle_id:
+        description: 把 Bundle ID / App Group 改写成 <你的 GitHub 用户名>，避开原作者可能已占用的 App ID
+        type: boolean
+        default: true
+      adhoc_sign:
+        description: 构建后做 ad-hoc 签名，把 App Group 权限写进签名（提升重签后键盘读到配置的成功率）
+        type: boolean
+        default: true
+  push:
+    paths:
+      - '.github/workflows/build-ios-unsigned.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 40
+
+    env:
+      CONFIG: ${{ inputs.configuration || 'Release' }}
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 打印工具链版本
+        run: |
+          set -x
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i iphoneos || true
+          sw_vers
+
+      - name: 改写 Bundle ID 与 App Group
+        if: ${{ inputs.uniquify_bundle_id || github.event_name == 'push' }}
+        env:
+          GH_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, pathlib, re
+
+          handle = re.sub(r'[^0-9A-Za-z]', '', os.environ.get('GH_ACTOR', '')).lower() or 'dev'
+          new = f'com.{handle}.jevjarvis'
+          old = 'com.jevchat.jarvis'
+          print(f'用户名 slug: {handle}')
+          print(f'改写前: {old} / {old}.keyboard / group.{old}')
+
+          # Shared/JevModel.swift 里硬编码了 App Group 字符串，不同步改的话
+          # App 会往一个自己没有权限的 UserDefaults suite 写配置，键盘读不到 —— 包等于废的。
+          # UITests 里也有一处 plist 路径引用，一并改掉保持一致。
+          targets = (
+              'JevJarvis.xcodeproj/project.pbxproj',
+              'project.yml',
+              'App/JevJarvis.entitlements',
+              'Keyboard/JevKeyboard.entitlements',
+              'Shared/JevModel.swift',
+              'UITests/AutoLaunchTests.swift',
+          )
+
+          total = 0
+          for target in targets:
+              path = pathlib.Path(target)
+              text = path.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count:
+                  path.write_text(text.replace(old, new), encoding='utf-8')
+              total += count
+              print(f'  {target}: {count} 处')
+          print(f'改写后: {new} / {new}.keyboard / group.{new}')
+          assert total > 0, f'没找到任何 {old}，改写逻辑可能已失效'
+
+          # 一致性校验：Swift 里用的 App Group 必须和 entitlements 里申请的一致
+          swift = pathlib.Path('Shared/JevModel.swift').read_text(encoding='utf-8')
+          swift_group = re.search(r'appGroupID\s*=\s*"([^"]+)"', swift)
+          ent_group = re.search(r'<string>(group\.[^<]+)</string>',
+                                pathlib.Path('App/JevJarvis.entitlements').read_text(encoding='utf-8'))
+          assert swift_group and ent_group, 'App Group 字符串提取失败'
+          if swift_group.group(1) != ent_group.group(1):
+              raise SystemExit(
+                  f'App Group 不一致：Swift={swift_group.group(1)} entitlements={ent_group.group(1)}')
+          print(f'一致性校验通过：Swift 与 entitlements 都是 {swift_group.group(1)}')
+          PY
+          echo "--- pbxproj 里的 Bundle ID ---"
+          grep -n 'PRODUCT_BUNDLE_IDENTIFIER' JevJarvis.xcodeproj/project.pbxproj || true
+          echo "--- entitlements 里的 App Group ---"
+          grep -n 'group\.' App/JevJarvis.entitlements Keyboard/JevKeyboard.entitlements || true
+
+      - name: 编译（完全不签名）
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project JevJarvis.xcodeproj \
+            -target JevJarvis \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -configuration "${CONFIG}" \
+            -derivedDataPath build/dd \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            build 2>&1 | tee build.log | tail -60
+
+      - name: 定位 .app 并确认键盘扩展已嵌入
+        run: |
+          set -euo pipefail
+          APP=$(find build/dd/Build/Products -maxdepth 2 -name 'JevJarvis.app' -type d | head -1 || true)
+          if [ -z "$APP" ]; then
+            APP=$(find "$HOME/Library/Developer/Xcode/DerivedData" -name 'JevJarvis.app' \
+                  -path "*${CONFIG}-iphoneos*" -type d | head -1 || true)
+          fi
+          [ -n "$APP" ] || { echo "构建产物里找不到 JevJarvis.app"; exit 1; }
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+          ls -la "$APP"
+          echo "--- PlugIns（键盘扩展必须在这一层）---"
+          ls -la "$APP/PlugIns"
+          [ -d "$APP/PlugIns/JevKeyboard.appex" ] || { echo "键盘扩展没被嵌入，包是废的"; exit 1; }
+
+      - name: ad-hoc 签名（写入 App Group 权限）
+        if: ${{ inputs.adhoc_sign || github.event_name == 'push' }}
+        run: |
+          set -euo pipefail
+          codesign -f -s - --timestamp=none \
+            --entitlements Keyboard/JevKeyboard.entitlements \
+            "$APP_PATH/PlugIns/JevKeyboard.appex"
+          codesign -f -s - --timestamp=none \
+            --entitlements App/JevJarvis.entitlements \
+            "$APP_PATH"
+          echo "--- 校验外层签名里的权限 ---"
+          codesign -d --entitlements - "$APP_PATH" 2>&1 || true
+
+      - name: 打包成 ipa 并记录信息
+        run: |
+          set -euo pipefail
+          rm -rf ipa && mkdir -p ipa/Payload
+          cp -R "$APP_PATH" ipa/Payload/
+          (cd ipa && zip -qry ../JevJarvis-unsigned.ipa Payload)
+          ls -lh JevJarvis-unsigned.ipa
+
+          PB=/usr/libexec/PlistBuddy
+          APP_ID=$($PB -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")
+          KB_ID=$($PB -c 'Print :CFBundleIdentifier' "$APP_PATH/PlugIns/JevKeyboard.appex/Info.plist")
+          VER=$($PB -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")
+          BLD=$($PB -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")
+          MIN=$($PB -c 'Print :MinimumOSVersion' "$APP_PATH/Info.plist" 2>/dev/null || echo '16.0')
+          # 直接从源文件读，别用 Bundle ID 做字符串推导（关掉改写开关时会算错）
+          APP_GROUP=$(sed -n 's/.*<string>\(group\.[^<]*\)<\/string>.*/\1/p' App/JevJarvis.entitlements | head -1)
+
+          {
+            echo "构建时间: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            echo "提交: ${{ github.sha }}"
+            echo "配置: ${CONFIG}"
+            echo "宿主 App Bundle ID : ${APP_ID}"
+            echo "键盘扩展 Bundle ID: ${KB_ID}"
+            echo "App Group: ${APP_GROUP}"
+            echo "主版本: ${VER} (build ${BLD})"
+            echo "最低系统: iOS ${MIN}"
+            echo ""
+            echo "Sideloadly 里 Bundle ID 会自动读出，通常不用手填。"
+            echo "App 和键盘扩展必须共用同一个 App Group，上面这行就是它。"
+            echo ""
+            echo "ipa SHA256:"
+            shasum -a 256 JevJarvis-unsigned.ipa | awk '{print "  " $1}'
+          } | tee build-info.txt
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: JevJarvis-unsigned-ipa
+          path: |
+            JevJarvis-unsigned.ipa
+            build-info.txt
+            build.log
+          if-no-files-found: error
+          retention-days: 30
