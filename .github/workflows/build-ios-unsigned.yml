@@ -116,16 +116,13 @@ jobs:
         run: |
           set -uo pipefail
           : > build.log
+          mark() { echo "$*" | tee -a build.log; }
 
           attempt() {
             local label="$1"; shift
-            {
-              echo ""
-              echo "################################################################"
-              echo "# 编译尝试：${label}"
-              echo "# 命令：xcodebuild $*"
-              echo "################################################################"
-            } >> build.log
+            mark ""
+            mark "########## 编译尝试：${label} ##########"
+            mark "########## 命令：xcodebuild -project JevJarvis.xcodeproj -sdk iphoneos -configuration ${CONFIG} -derivedDataPath build/dd CODE_SIGNING_ALLOWED=NO $* build"
             xcodebuild -project JevJarvis.xcodeproj -sdk iphoneos \
               -configuration "${CONFIG}" \
               -derivedDataPath build/dd \
@@ -136,16 +133,15 @@ jobs:
           # 尝试 1：作者 README / AGENTS.md 里验证过的写法
           if attempt "作者官方写法（-target + generic destination）" \
                -target JevJarvis -destination 'generic/platform=iOS'; then
-            echo "编译成功（-target 写法）"
+            mark ">>> 结果：编译成功 —— 作者官方写法（-target）"
           # 尝试 2：改用共享 scheme（.xcodeproj 里有 xcshareddata/xcschemes）
-          elif attempt "共享 scheme（-scheme）" -scheme JevJarvis; then
-            echo "编译成功（-scheme 写法）"
-          # 尝试 3：去掉 destination，只靠 -sdk
-          elif attempt "纯 -sdk 设备构建" -scheme JevJarvis -destination 'generic/platform=iOS'; then
-            echo "编译成功（-sdk 写法）"
+          elif attempt "共享 scheme（-scheme JevJarvis，不带 destination）" -scheme JevJarvis; then
+            mark ">>> 结果：编译成功 —— 走的是 -scheme 回退，说明本 runner 上 -target 写法不可用"
+          # 尝试 3：scheme + destination
+          elif attempt "共享 scheme + generic destination" -scheme JevJarvis -destination 'generic/platform=iOS'; then
+            mark ">>> 结果：编译成功 —— 走的是 -scheme + destination 回退"
           else
-            echo "::error::三种编译方式全部失败，末尾日志如下"
-            tail -80 build.log
+            mark ">>> 结果：三种写法全部失败"
             exit 1
           fi
 
@@ -223,16 +219,19 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # 没有 Mac 的人看不到 Actions 日志（下载要登录）。把日志推回分支，
-      # 这样任何人用一条 curl 就能读，排查不用来回问。
-      - name: 失败时把构建日志推到 ci-log 分支
-        if: failure()
+      # 没有 Mac 的人看不到 Actions 日志（下载日志要登录 GitHub）。
+      # 把日志推回一个分支，任何人一条 curl 就能读，排查不用来回问。
+      # continue-on-error：这一步纯粹是搬运日志，绝不能因为它把绿色的构建搞红。
+      - name: 把构建日志推到 ci-log 分支（便于远程诊断）
+        if: always()
+        continue-on-error: true
         run: |
           set -uo pipefail
-          [ -s build.log ] || echo "(编译没产生 build.log)" > build.log
+          [ -s build.log ] || echo "(本次没有产生 build.log)" > build.log
+          [ -f build-info.txt ] || echo "(本次没有产生 build-info.txt)" > build-info.txt
           git config user.name "ci-diagnostics"
           git config user.email "ci-diagnostics@users.noreply.github.com"
           git checkout -B ci-log
-          git add -f build.log
+          git add -f build.log build-info.txt
           git commit -q -m "ci: 构建日志 run=${GITHUB_RUN_ID} sha=${GITHUB_SHA:0:8}" || true
           git push -f origin ci-log && echo "日志已推送到 ci-log 分支"
