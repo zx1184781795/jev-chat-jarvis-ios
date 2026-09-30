@@ -28,12 +28,12 @@ on:
       - '.github/workflows/build-ios-unsigned.yml'
 
 permissions:
-  contents: read
+  contents: write   # 失败时要把构建日志推回 ci-log 分支，方便没有 Mac 的人远程诊断
 
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 40
+    timeout-minutes: 45
 
     env:
       CONFIG: ${{ inputs.configuration || 'Release' }}
@@ -41,13 +41,21 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: 打印工具链版本
         run: |
           set -x
-          xcodebuild -version
-          xcodebuild -showsdks | grep -i iphoneos || true
           sw_vers
+          xcodebuild -version
+          xcode-select -p
+          ls /Applications | grep -i xcode || true
+          xcodebuild -showsdks | grep -i iphoneos || true
+
+      - name: 列出工程可用的 target / scheme
+        run: |
+          xcodebuild -list -project JevJarvis.xcodeproj || true
 
       - name: 改写 Bundle ID 与 App Group
         if: ${{ inputs.uniquify_bundle_id || github.event_name == 'push' }}
@@ -106,18 +114,40 @@ jobs:
 
       - name: 编译（完全不签名）
         run: |
-          set -euo pipefail
-          xcodebuild \
-            -project JevJarvis.xcodeproj \
-            -target JevJarvis \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -configuration "${CONFIG}" \
-            -derivedDataPath build/dd \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            build 2>&1 | tee build.log | tail -60
+          set -uo pipefail
+          : > build.log
+
+          attempt() {
+            local label="$1"; shift
+            {
+              echo ""
+              echo "################################################################"
+              echo "# 编译尝试：${label}"
+              echo "# 命令：xcodebuild $*"
+              echo "################################################################"
+            } >> build.log
+            xcodebuild -project JevJarvis.xcodeproj -sdk iphoneos \
+              -configuration "${CONFIG}" \
+              -derivedDataPath build/dd \
+              CODE_SIGNING_ALLOWED=NO \
+              "$@" build >> build.log 2>&1
+          }
+
+          # 尝试 1：作者 README / AGENTS.md 里验证过的写法
+          if attempt "作者官方写法（-target + generic destination）" \
+               -target JevJarvis -destination 'generic/platform=iOS'; then
+            echo "编译成功（-target 写法）"
+          # 尝试 2：改用共享 scheme（.xcodeproj 里有 xcshareddata/xcschemes）
+          elif attempt "共享 scheme（-scheme）" -scheme JevJarvis; then
+            echo "编译成功（-scheme 写法）"
+          # 尝试 3：去掉 destination，只靠 -sdk
+          elif attempt "纯 -sdk 设备构建" -scheme JevJarvis -destination 'generic/platform=iOS'; then
+            echo "编译成功（-sdk 写法）"
+          else
+            echo "::error::三种编译方式全部失败，末尾日志如下"
+            tail -80 build.log
+            exit 1
+          fi
 
       - name: 定位 .app 并确认键盘扩展已嵌入
         run: |
@@ -182,6 +212,7 @@ jobs:
           } | tee build-info.txt
 
       - name: 上传产物
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: JevJarvis-unsigned-ipa
@@ -191,3 +222,17 @@ jobs:
             build.log
           if-no-files-found: error
           retention-days: 30
+
+      # 没有 Mac 的人看不到 Actions 日志（下载要登录）。把日志推回分支，
+      # 这样任何人用一条 curl 就能读，排查不用来回问。
+      - name: 失败时把构建日志推到 ci-log 分支
+        if: failure()
+        run: |
+          set -uo pipefail
+          [ -s build.log ] || echo "(编译没产生 build.log)" > build.log
+          git config user.name "ci-diagnostics"
+          git config user.email "ci-diagnostics@users.noreply.github.com"
+          git checkout -B ci-log
+          git add -f build.log
+          git commit -q -m "ci: 构建日志 run=${GITHUB_RUN_ID} sha=${GITHUB_SHA:0:8}" || true
+          git push -f origin ci-log && echo "日志已推送到 ci-log 分支"
