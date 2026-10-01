@@ -398,8 +398,8 @@ final class KeyboardViewController: UIInputViewController {
         } else if !JevStore.groupContainerAvailable {
             // 共享通道断了：App 里填了 Key 键盘也读不到，必须先把签名修好，说「去填 Key」只会误导
             let warn = KB.label(
-                L("⚠️ 共享容器不可用：这次安装的签名没带上 App Group 权限，键盘读不到 App 里填的 Key。用 Sideloadly 重签安装（保持 App Group 支持开启）后重试",
-                  "⚠️ Shared container unavailable: this install's signature lacks the App Group entitlement, so the keyboard cannot read the key saved in the app. Re-sign with Sideloadly (keep App Group support on) and reinstall"),
+                L("⚠️ 共享容器不可用：这次安装的签名没带上 App Group 权限，键盘读不到 App 里填的 Key。用 Sideloadly 重签安装（保持 App Group 支持开启）后重试。装好后这条若还在：长按键盘 1.5 秒，可直接在键盘里填 Key（不依赖签名，填完即用）",
+                  "⚠️ Shared container unavailable: this install's signature lacks the App Group entitlement, so the keyboard cannot read the key saved in the app. Re-sign with Sideloadly (keep App Group support on) and reinstall. If this persists after reinstall: long-press the keyboard 1.5s to fill the key right in the keyboard (signature-independent)"),
                 font: .systemFont(ofSize: 12), color: .systemRed, lines: 0)
             vstack.addArrangedSubview(warn)
         } else {
