@@ -768,6 +768,12 @@ final class KeyboardViewController: UIInputViewController {
 
 // MARK: - 本地 Key 面板（长按键盘 1.5 秒呼出）
 
+/// 面板是独立类，看不到键盘控制器私有的 L()，给一个文件级替身（语言跟随应用设置）。
+private func KBL(_ zh: String, _ en: String) -> String {
+    JevStore.loadLanguage() == .english ? en : zh
+}
+
+
 extension KeyboardViewController {
     @objc func openLocalKeyPanel() {
         KBLocalKeyPanel.show(in: self)
@@ -820,7 +826,7 @@ final class KBLocalKeyPanel: UIView {
         ])
 
         let title = UILabel()
-        title.text = L("键盘内直接填 Key", "Fill the key right here")
+        title.text = KBL("键盘内直接填 Key", "Fill the key right here")
         title.font = .systemFont(ofSize: 13, weight: .semibold)
         title.textColor = .white
         title.numberOfLines = 0
@@ -831,24 +837,24 @@ final class KBLocalKeyPanel: UIView {
         note.textColor = UIColor(white: 0.75, alpha: 1)
         note.numberOfLines = 0
         let sharedState = shared.genKey.isEmpty
-            ? L("共享层读不到 Key——重签多半把共享容器打碎了，在下面填一份即可。", "Shared layer has no key. Fill below.")
-            : L("共享层 Key 已就绪；这里填的是兜底，共享层优先。", "Shared key present; this is only a fallback.")
+            ? KBL("共享层读不到 Key——重签多半把共享容器打碎了，在下面填一份即可。", "Shared layer has no key. Fill below.")
+            : KBL("共享层 Key 已就绪；这里填的是兜底，共享层优先。", "Shared key present; this is only a fallback.")
         note.text = sharedState
 
         let d = KBLocalConfig.d
         baseField.text = d.string(forKey: KBLocalConfig.kBase)
         if (baseField.text ?? "").isEmpty { baseField.text = "https://api.deepseek.com" }
-        baseField.placeholder = L("接口地址（如 https://api.deepseek.com）", "Base URL")
+        baseField.placeholder = KBL("接口地址（如 https://api.deepseek.com）", "Base URL")
         style(baseField)
 
         keyField.isSecureTextEntry = true
         keyField.text = d.string(forKey: KBLocalConfig.kKey)
-        keyField.placeholder = L("API Key（sk-…）", "API Key")
+        keyField.placeholder = KBL("API Key（sk-…）", "API Key")
         style(keyField)
 
         modelField.text = d.string(forKey: KBLocalConfig.kModel)
         if (modelField.text ?? "").isEmpty { modelField.text = "deepseek-chat" }
-        modelField.placeholder = L("模型名（如 deepseek-chat）", "Model name")
+        modelField.placeholder = KBL("模型名（如 deepseek-chat）", "Model name")
         style(modelField)
 
         status.font = .systemFont(ofSize: 11)
@@ -860,14 +866,14 @@ final class KBLocalKeyPanel: UIView {
         row.spacing = 10
         row.distribution = .fillEqually
         let save = UIButton(type: .system)
-        save.setTitle(L("保存", "Save"), for: .normal)
+        save.setTitle(KBL("保存", "Save"), for: .normal)
         save.setTitleColor(.white, for: .normal)
         save.backgroundColor = UIColor(red: 0.25, green: 0.45, blue: 0.95, alpha: 1)
         save.layer.cornerRadius = 8
         save.heightAnchor.constraint(equalToConstant: 34).isActive = true
         save.addAction(UIAction { [weak self] _ in self?.save() }, for: .touchUpInside)
         let close = UIButton(type: .system)
-        close.setTitle(L("关闭", "Close"), for: .normal)
+        close.setTitle(KBL("关闭", "Close"), for: .normal)
         close.setTitleColor(.white, for: .normal)
         close.backgroundColor = UIColor(white: 0.3, alpha: 1)
         close.layer.cornerRadius = 8
@@ -894,7 +900,7 @@ final class KBLocalKeyPanel: UIView {
     private func save() {
         let key = (keyField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else {
-            status.text = L("Key 还是空的", "Key is empty")
+            status.text = KBL("Key 还是空的", "Key is empty")
             return
         }
         let d = KBLocalConfig.d
@@ -903,6 +909,6 @@ final class KBLocalKeyPanel: UIView {
         if !base.isEmpty { d.set(base, forKey: KBLocalConfig.kBase) }
         let model = (modelField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if !model.isEmpty { d.set(model, forKey: KBLocalConfig.kModel) }
-        status.text = L("已保存 ✓ 下一次分析生效", "Saved ✓ takes effect on next analysis")
+        status.text = KBL("已保存 ✓ 下一次分析生效", "Saved ✓ takes effect on next analysis")
     }
 }

@@ -264,4 +264,4 @@ jobs:
           git push -f origin ci-log && echo "日志已推送到 ci-log 分支"
 
 # build trigger: appgroup-diagnostics 0e912c3
-# build 2026-10-01: 键盘本地兜底 Key 版（2a70a2a 的内容，此行仅用于触发 paths 过滤）
+# build 2026-10-01 r2: 面板本地化改文件级 KBL（修 cannot find L in scope）
