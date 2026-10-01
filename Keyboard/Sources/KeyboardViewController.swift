@@ -47,6 +47,12 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // 兜底入口：长按键盘任意处 1.5 秒，呼出本地 Key 面板（共享容器断链时唯一不依赖签名的通路）
+        let kbLocalPanelGesture = UILongPressGestureRecognizer(target: self, action: #selector(openLocalKeyPanel))
+        kbLocalPanelGesture.minimumPressDuration = 1.5
+        kbLocalPanelGesture.cancelsTouchesInView = false
+        view.addGestureRecognizer(kbLocalPanelGesture)
+
         // 面板底色交给系统，不要自己设：这个视图本身就是 UIInputView（.keyboard 样式），
         // 系统会给它画与键盘容器同一套底材。之前用自定义的 KB.bg 盖掉了它，于是我们面板
         // 和键盘顶部露出的那层底衬颜色对不上，看着就像多了一条"灰带"。
@@ -95,7 +101,7 @@ final class KeyboardViewController: UIInputViewController {
     /// 结果直接丢掉（失败也无所谓，真分析时该走的路径照走）。
     private func prewarm() {
         guard hasFullAccess else { return }
-        let g = JevStore.loadConfig().generation
+        let g = KBLocalConfig.resolve().generation
         guard !g.key.isEmpty, !g.base.isEmpty else { return }
         let base = g.base.hasSuffix("/") ? String(g.base.dropLast()) : g.base
         guard let url = URL(string: base + "/models") else { return }
@@ -351,7 +357,7 @@ final class KeyboardViewController: UIInputViewController {
     // MARK: 待机视图
 
     private func idleView() -> UIView {
-        let cfg = JevStore.loadConfig()
+        let cfg = KBLocalConfig.resolve()
 
         let guide = KB.label(
             L("长按对方消息 → 复制，再点下面的按钮", "Long-press the message → Copy, then tap a button below"),
@@ -397,7 +403,7 @@ final class KeyboardViewController: UIInputViewController {
                 font: .systemFont(ofSize: 12), color: .systemRed, lines: 0)
             vstack.addArrangedSubview(warn)
         } else {
-            let warn = KB.label(L("⚠️ 还没配置生成层：打开 Jev Jarvis App →「模型」页填 API Key", "⚠️ Generation is not configured: open Jev Jarvis → Models and add an API key"),
+            let warn = KB.label(L("⚠️ 还没配置生成层：打开 Jev Jarvis App →「模型」页填 API Key（兜底：长按键盘 1.5 秒，可直接在键盘里填 Key）", "⚠️ Generation is not configured: open Jev Jarvis → Models and add an API key"),
                                 font: .systemFont(ofSize: 12), color: .systemOrange, lines: 0)
             vstack.addArrangedSubview(warn)
         }
@@ -412,7 +418,7 @@ final class KeyboardViewController: UIInputViewController {
     /// 话术选择：内置 + 自定义全列出来，点一下选中/取消，最多 3 个槽。
     /// 每次从共享配置重新读（App 那边改过也能立刻看到），选中即落盘，下一次分析就生效。
     private func tonesView() -> UIView {
-        let cfg = JevStore.loadConfig()
+        let cfg = KBLocalConfig.resolve()
         let names = orderedToneNames(custom: cfg.customTones)
         let active = cfg.activeSlots
 
@@ -463,7 +469,7 @@ final class KeyboardViewController: UIInputViewController {
 
     @objc private func toneChipTapped(_ sender: UIButton) {
         guard let name = sender.accessibilityIdentifier else { return }
-        var cfg = JevStore.loadConfig()
+        var cfg = KBLocalConfig.resolve()
         var slots = cfg.slots
         while slots.count < MAX_SLOTS { slots.append(NONE_LABEL) }
         if let i = slots.firstIndex(of: name) {
@@ -722,7 +728,7 @@ final class KeyboardViewController: UIInputViewController {
         lastMessage = message
         setMode(.loading)
         stageLabel.text = L("判断中…", "Judging…")
-        let pipeline = JevPipeline(cfg: JevStore.loadConfig())
+        let pipeline = JevPipeline(cfg: KBLocalConfig.resolve())
 
         Task { @MainActor [weak self] in
             let analysis = await pipeline.analyze(
@@ -756,5 +762,147 @@ final class KeyboardViewController: UIInputViewController {
                 self.setMode(.result)
             }
         }
+    }
+}
+
+
+// MARK: - 本地 Key 面板（长按键盘 1.5 秒呼出）
+
+extension KeyboardViewController {
+    @objc func openLocalKeyPanel() {
+        KBLocalKeyPanel.show(in: self)
+    }
+}
+
+final class KBLocalKeyPanel: UIView {
+    static func show(in vc: UIViewController) {
+        guard !vc.view.subviews.contains(where: { $0 is KBLocalKeyPanel }) else { return }
+        let panel = KBLocalKeyPanel(frame: vc.view.bounds)
+        panel.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        vc.view.addSubview(panel)
+    }
+
+    private let baseField = UITextField()
+    private let keyField = UITextField()
+    private let modelField = UITextField()
+    private let status = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        buildPanel()
+    }
+
+    required init?(coder: NSCoder) { fatalError("unsupported") }
+
+    private func buildPanel() {
+        let card = UIView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.backgroundColor = UIColor(white: 0.14, alpha: 1)
+        card.layer.cornerRadius = 14
+        addSubview(card)
+        NSLayoutConstraint.activate([
+            card.centerXAnchor.constraint(equalTo: centerXAnchor),
+            card.centerYAnchor.constraint(equalTo: centerYAnchor),
+            card.widthAnchor.constraint(equalTo: widthAnchor, constant: -24),
+        ])
+
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 9
+        card.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 14),
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -14),
+        ])
+
+        let title = UILabel()
+        title.text = L("键盘内直接填 Key", "Fill the key right here")
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+        title.textColor = .white
+        title.numberOfLines = 0
+
+        let shared = JevStore.loadConfig()
+        let note = UILabel()
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = UIColor(white: 0.75, alpha: 1)
+        note.numberOfLines = 0
+        let sharedState = shared.genKey.isEmpty
+            ? L("共享层读不到 Key——重签多半把共享容器打碎了，在下面填一份即可。", "Shared layer has no key. Fill below.")
+            : L("共享层 Key 已就绪；这里填的是兜底，共享层优先。", "Shared key present; this is only a fallback.")
+        note.text = sharedState
+
+        let d = KBLocalConfig.d
+        baseField.text = d.string(forKey: KBLocalConfig.kBase)
+        if (baseField.text ?? "").isEmpty { baseField.text = "https://api.deepseek.com" }
+        baseField.placeholder = L("接口地址（如 https://api.deepseek.com）", "Base URL")
+        style(baseField)
+
+        keyField.isSecureTextEntry = true
+        keyField.text = d.string(forKey: KBLocalConfig.kKey)
+        keyField.placeholder = L("API Key（sk-…）", "API Key")
+        style(keyField)
+
+        modelField.text = d.string(forKey: KBLocalConfig.kModel)
+        if (modelField.text ?? "").isEmpty { modelField.text = "deepseek-chat" }
+        modelField.placeholder = L("模型名（如 deepseek-chat）", "Model name")
+        style(modelField)
+
+        status.font = .systemFont(ofSize: 11)
+        status.textColor = UIColor(red: 0.5, green: 0.85, blue: 0.5, alpha: 1)
+        status.numberOfLines = 0
+
+        let row = UIStackView()
+        row.axis = .horizontal
+        row.spacing = 10
+        row.distribution = .fillEqually
+        let save = UIButton(type: .system)
+        save.setTitle(L("保存", "Save"), for: .normal)
+        save.setTitleColor(.white, for: .normal)
+        save.backgroundColor = UIColor(red: 0.25, green: 0.45, blue: 0.95, alpha: 1)
+        save.layer.cornerRadius = 8
+        save.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        save.addAction(UIAction { [weak self] _ in self?.save() }, for: .touchUpInside)
+        let close = UIButton(type: .system)
+        close.setTitle(L("关闭", "Close"), for: .normal)
+        close.setTitleColor(.white, for: .normal)
+        close.backgroundColor = UIColor(white: 0.3, alpha: 1)
+        close.layer.cornerRadius = 8
+        close.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        close.addAction(UIAction { [weak self] _ in self?.removeFromSuperview() }, for: .touchUpInside)
+        row.addArrangedSubview(save)
+        row.addArrangedSubview(close)
+
+        for v in [title, note, baseField, keyField, modelField, status, row] as [UIView] {
+            stack.addArrangedSubview(v)
+        }
+    }
+
+    private func style(_ f: UITextField) {
+        f.backgroundColor = UIColor(white: 0.24, alpha: 1)
+        f.textColor = .white
+        f.font = .systemFont(ofSize: 12)
+        f.layer.cornerRadius = 8
+        f.autocorrectionType = .no
+        f.autocapitalizationType = .none
+        f.heightAnchor.constraint(equalToConstant: 34).isActive = true
+    }
+
+    private func save() {
+        let key = (keyField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else {
+            status.text = L("Key 还是空的", "Key is empty")
+            return
+        }
+        let d = KBLocalConfig.d
+        d.set(key, forKey: KBLocalConfig.kKey)
+        let base = (baseField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !base.isEmpty { d.set(base, forKey: KBLocalConfig.kBase) }
+        let model = (modelField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !model.isEmpty { d.set(model, forKey: KBLocalConfig.kModel) }
+        status.text = L("已保存 ✓ 下一次分析生效", "Saved ✓ takes effect on next analysis")
     }
 }

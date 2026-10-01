@@ -203,3 +203,34 @@ enum JevStore {
     }
 #endif
 }
+
+
+// MARK: - 键盘本地兜底配置（App Group 断链时的最后通路）
+//
+// 免费账号重签最常见的翻车点：entitlement 还在、容器 URL 也解析得出，
+// 但描述文件没真正注册这个 App Group——App 和键盘各拿一个私有岛，
+// App 填的 Key 键盘永远读不到。这里给键盘一条不依赖共享的路：
+// 长按键盘 1.5 秒呼出面板，Key 直接存进键盘扩展自己的沙盒。
+// 语义：共享层读得到就用共享层；读不到（生成层 Key 为空）才落本地兜底。
+enum KBLocalConfig {
+    static let d = UserDefaults.standard
+    static let kBase = "kb.local.genBase.v1"
+    static let kKey = "kb.local.genKey.v1"
+    static let kModel = "kb.local.genModel.v1"
+
+    /// 键盘本地是否存了兜底 Key
+    static var hasLocal: Bool {
+        !(d.string(forKey: kKey) ?? "").isEmpty
+    }
+
+    /// 键盘侧唯一入口：共享层拿得到就原样返回；拿不到且本地有兜底才补。
+    static func resolve() -> JevConfig {
+        var cfg = JevStore.loadConfig()
+        if cfg.genKey.isEmpty, let k = d.string(forKey: kKey), !k.isEmpty {
+            if let b = d.string(forKey: kBase), !b.isEmpty { cfg.genBase = b }
+            cfg.genKey = k
+            if let m = d.string(forKey: kModel), !m.isEmpty { cfg.genModel = m }
+        }
+        return cfg
+    }
+}

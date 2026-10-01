@@ -66,7 +66,7 @@ final class JevPipeline {
                 : "消息内容为空：请先在聊天里长按消息点「复制」，或把要回的话输进输入框"
             return out
         }
-        guard JevStore.groupContainerAvailable else {
+        guard JevStore.groupContainerAvailable || KBLocalConfig.hasLocal else {
             // 共享通道断了：App 与键盘各持一个私有容器，配置永远传不过去。
             // 这时候提示「去填 Key」是死路——必须先修签名。
             out.fatalError = JevStore.loadLanguage() == .english
@@ -77,7 +77,7 @@ final class JevPipeline {
         guard draft.isConfigured else {
             out.fatalError = JevStore.loadLanguage() == .english
                 ? "Generation layer not configured. Open Jev Jarvis → Models and add an API key"
-                : "还没配置生成层：打开 Jev Jarvis App →「模型」页填 API Key"
+                : "还没配置生成层：打开 Jev Jarvis App →「模型」页填 API Key（兜底：长按键盘 1.5 秒，可直接在键盘里填 Key）"
             return out
         }
 
