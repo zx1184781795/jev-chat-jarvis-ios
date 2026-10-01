@@ -63,11 +63,11 @@ struct SetupView: View {
             row(icon: "externaldrive.connected.to.line.below", title: jevLocalized(store.language, zh: "App Group 共享", en: "App Group sharing"),
                 ok: groupOK, detail: groupOK
                     ? jevLocalized(store.language, zh: "配置可以同步到键盘", en: "Configuration syncs to the keyboard")
-                    : jevLocalized(store.language, zh: "共享容器不可用：请确认用 Xcode 把 App 和键盘扩展签在同一个 Team 下", en: "The shared container is unavailable. Sign both targets with the same Team."))
+                    : jevLocalized(store.language, zh: "共享容器不可用：这次安装的签名没带上 App Group 权限，键盘读不到 App 里填的 Key。用 Sideloadly 重签安装（保持 App Group 支持开启；免费账号有 App Group 额度）后重试", en: "Shared container unavailable: this install's signature lacks the App Group entitlement, so the keyboard cannot read the key. Re-sign with Sideloadly (keep App Group support on) and reinstall."))
         } header: {
             Text(jevLocalized(store.language, zh: "状态", en: "Status"))
         } footer: {
-            Text(jevLocalized(store.language, zh: "键盘每次被唤起时会回写状态，这里每 2 秒刷新。", en: "The keyboard writes its status when opened. This view refreshes every 2 seconds."))
+            Text(jevLocalized(store.language, zh: "键盘每次被唤起时会回写状态，这里每 2 秒刷新。排查口诀：用过键盘但「键盘已启用」一直是灰的，说明 App 和键盘的共享通道断了（签名缺 App Group 权限），填多少遍 Key 键盘都读不到。", en: "The keyboard writes its status when opened. This view refreshes every 2 seconds. Debug rule: if you have used the keyboard but \"Keyboard enabled\" stays gray, the App↔keyboard shared channel is broken (signature missing the App Group entitlement) — no key you enter will reach the keyboard."))
         }
     }
 

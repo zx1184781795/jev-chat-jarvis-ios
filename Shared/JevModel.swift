@@ -133,8 +133,17 @@ enum JevStore {
         UserDefaults(suiteName: appGroupID) ?? .standard
     }
 
+    /// App Group 容器是否真的分配给了本进程。
+    /// entitlement 没进有效签名时这里返回 nil——之前只做同进程 canary 读写，
+    /// 那在退化成的私有容器里也能成功，会给出假「✅ 配置可以同步到键盘」。
+    static var groupContainerAvailable: Bool {
+        FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroupID) != nil
+    }
+
     /// App Group 容器是否真的可写可读（签名没带上 entitlement 时 suite 会静默退化为私有容器）。
     static var groupWritable: Bool {
+        guard groupContainerAvailable else { return false }
         let stamp = "t\(Date().timeIntervalSince1970)"
         defaults.set(stamp, forKey: canaryKey)
         return defaults.string(forKey: canaryKey) == stamp

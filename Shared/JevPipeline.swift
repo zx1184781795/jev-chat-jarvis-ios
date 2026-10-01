@@ -66,6 +66,14 @@ final class JevPipeline {
                 : "消息内容为空：请先在聊天里长按消息点「复制」，或把要回的话输进输入框"
             return out
         }
+        guard JevStore.groupContainerAvailable else {
+            // 共享通道断了：App 与键盘各持一个私有容器，配置永远传不过去。
+            // 这时候提示「去填 Key」是死路——必须先修签名。
+            out.fatalError = JevStore.loadLanguage() == .english
+                ? "Shared container unavailable: this install's signature lacks the App Group entitlement, so the keyboard cannot read the app's config. Re-sign with Sideloadly (keep App Group support on) and reinstall"
+                : "共享容器不可用：这次安装的签名没带上 App Group 权限，键盘读不到 App 的配置。请用 Sideloadly 重签安装（保持 App Group 支持开启）后重试"
+            return out
+        }
         guard draft.isConfigured else {
             out.fatalError = JevStore.loadLanguage() == .english
                 ? "Generation layer not configured. Open Jev Jarvis → Models and add an API key"
