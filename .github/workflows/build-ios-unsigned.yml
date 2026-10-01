@@ -262,3 +262,5 @@ jobs:
           git add -f build.log build-info.txt
           git commit -q -m "ci: 构建日志 run=${GITHUB_RUN_ID} sha=${GITHUB_SHA:0:8}" || true
           git push -f origin ci-log && echo "日志已推送到 ci-log 分支"
+
+# build trigger: appgroup-diagnostics 0e912c3
