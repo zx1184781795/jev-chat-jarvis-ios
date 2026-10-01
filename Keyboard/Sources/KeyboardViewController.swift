@@ -395,16 +395,24 @@ final class KeyboardViewController: UIInputViewController {
         vstack.spacing = 8
         if JevDraft(cfg: cfg).isConfigured {
             // 配置完整时不占行
-        } else if !JevStore.groupContainerAvailable {
-            // 共享通道断了：App 里填了 Key 键盘也读不到，必须先把签名修好，说「去填 Key」只会误导
-            let warn = KB.label(
-                L("⚠️ 共享容器不可用：这次安装的签名没带上 App Group 权限，键盘读不到 App 里填的 Key。用 Sideloadly 重签安装（保持 App Group 支持开启）后重试。装好后这条若还在：长按键盘 1.5 秒，可直接在键盘里填 Key（不依赖签名，填完即用）",
-                  "⚠️ Shared container unavailable: this install's signature lacks the App Group entitlement, so the keyboard cannot read the key saved in the app. Re-sign with Sideloadly (keep App Group support on) and reinstall. If this persists after reinstall: long-press the keyboard 1.5s to fill the key right in the keyboard (signature-independent)"),
-                font: .systemFont(ofSize: 12), color: .systemRed, lines: 0)
-            vstack.addArrangedSubview(warn)
         } else {
-            let warn = KB.label(L("⚠️ 还没配置生成层：打开 Jev Jarvis App →「模型」页填 API Key（兜底：长按键盘 1.5 秒，可直接在键盘里填 Key）", "⚠️ Generation is not configured: open Jev Jarvis → Models and add an API key"),
-                                font: .systemFont(ofSize: 12), color: .systemOrange, lines: 0)
+            // 免费 Apple ID 拿不到 App Group（苹果的能力限制，任何重签工具都改不了），
+            // 键盘本地这份配置才是免费账号下唯一走得通的通路——所以入口必须显眼，
+            // 不能藏在「长按 1.5 秒」这种没人知道的手势里。
+            let fixBtn = KB.button(L("🔑 在键盘里填 API Key", "🔑 Enter API key here"),
+                                   icon: "key.fill", primary: true,
+                                   font: .systemFont(ofSize: 14, weight: .semibold))
+            fixBtn.heightAnchor.constraint(equalToConstant: 38).isActive = true
+            fixBtn.addTarget(self, action: #selector(openLocalKeyPanel), for: .touchUpInside)
+            vstack.addArrangedSubview(fixBtn)
+
+            let why = JevStore.groupContainerAvailable
+                ? L("⚠️ 还没配置生成层：不用打开 App——点上面这个按钮，接口地址 / API Key / 模型名填在键盘里就行（也可以先在 App 的「模型」页点「复制配置串（给键盘）」，再回来点「从 App 粘贴配置」）。",
+                    "⚠️ Not configured: no need to open the app — tap the button above to fill base URL / API key / model right here (or copy the config string from the app's Models page and paste it here).")
+                : L("⚠️ App Group 共享容器不可用：这是免费 Apple ID 的固有限制（苹果不向个人团队发放 App Group 能力，换任何重签工具都一样），所以键盘读不到 App 里填的 Key。点上面这个按钮在键盘里填一份即可——不依赖共享容器，填完立刻能用。想让它俩自动共享，需要付费开发者账号（$99/年）或 iOS ≤17.0 的 TrollStore。",
+                    "⚠️ App Group shared container unavailable: this is an inherent limit of free Apple IDs (Apple does not grant App Groups to personal teams, and no signing tool can change that), so the keyboard cannot read the key saved in the app. Tap the button above and fill the key right here — no shared container needed. For automatic sharing you need a paid developer account or TrollStore on iOS ≤17.0.")
+            let warn = KB.label(why, font: .systemFont(ofSize: 12),
+                                color: JevStore.groupContainerAvailable ? .systemOrange : .systemRed, lines: 0)
             vstack.addArrangedSubview(warn)
         }
         fitBlocks = [vstack]
@@ -677,7 +685,18 @@ final class KeyboardViewController: UIInputViewController {
         let btns = UIStackView(arrangedSubviews: [retry, close])
         btns.axis = .horizontal
         btns.spacing = 8
-        let vstack = UIStackView(arrangedSubviews: [title, body, btns])
+        // 未配置时给一条直达键盘内填 Key 的路：错误页不该是死胡同。
+        var rows: [UIView] = [title, body]
+        if !JevDraft(cfg: KBLocalConfig.resolve()).isConfigured {
+            let fix = KB.button(L("🔑 在键盘里填 API Key", "🔑 Enter API key here"),
+                                icon: "key.fill", primary: true,
+                                font: .systemFont(ofSize: 14, weight: .semibold))
+            fix.heightAnchor.constraint(equalToConstant: 36).isActive = true
+            fix.addTarget(self, action: #selector(openLocalKeyPanel), for: .touchUpInside)
+            rows.append(fix)
+        }
+        rows.append(btns)
+        let vstack = UIStackView(arrangedSubviews: rows)
         vstack.axis = .vertical
         vstack.spacing = 8
         vstack.isLayoutMarginsRelativeArrangement = true
@@ -837,7 +856,8 @@ final class KBLocalKeyPanel: UIView {
         note.textColor = UIColor(white: 0.75, alpha: 1)
         note.numberOfLines = 0
         let sharedState = shared.genKey.isEmpty
-            ? KBL("共享层读不到 Key——重签多半把共享容器打碎了，在下面填一份即可。", "Shared layer has no key. Fill below.")
+            ? KBL("共享层没有 Key（免费 Apple ID 用不了 App Group，属于苹果限制）。下面填一份，或先在 App「模型」页点「复制配置串（给键盘）」再点下面的「从 App 粘贴配置」。",
+                  "No key in the shared layer (free Apple IDs cannot use App Groups — an Apple restriction). Fill it below, or copy the config string from the app and paste it here.")
             : KBL("共享层 Key 已就绪；这里填的是兜底，共享层优先。", "Shared key present; this is only a fallback.")
         note.text = sharedState
 
@@ -879,7 +899,16 @@ final class KBLocalKeyPanel: UIView {
         close.layer.cornerRadius = 8
         close.heightAnchor.constraint(equalToConstant: 34).isActive = true
         close.addAction(UIAction { [weak self] _ in self?.removeFromSuperview() }, for: .touchUpInside)
+        let pasteBtn = UIButton(type: .system)
+        pasteBtn.setTitle(KBL("从 App 粘贴配置", "Paste from app"), for: .normal)
+        pasteBtn.setTitleColor(.white, for: .normal)
+        pasteBtn.titleLabel?.font = .systemFont(ofSize: 13)
+        pasteBtn.backgroundColor = UIColor(white: 0.32, alpha: 1)
+        pasteBtn.layer.cornerRadius = 8
+        pasteBtn.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        pasteBtn.addAction(UIAction { [weak self] _ in self?.pasteFromClipboard() }, for: .touchUpInside)
         row.addArrangedSubview(save)
+        row.addArrangedSubview(pasteBtn)
         row.addArrangedSubview(close)
 
         for v in [title, note, baseField, keyField, modelField, status, row] as [UIView] {
@@ -895,6 +924,26 @@ final class KBLocalKeyPanel: UIView {
         f.autocorrectionType = .no
         f.autocapitalizationType = .none
         f.heightAnchor.constraint(equalToConstant: 34).isActive = true
+    }
+
+    /// 从 App 复制来的配置串里恢复三项配置。格式：JEV1:<base64(JSON{base,key,model})>
+    /// 完全绕开 App Group —— 剪贴板是免费账号下唯一的跨进程通道。
+    private func pasteFromClipboard() {
+        guard let raw = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+              raw.hasPrefix("JEV1:") else {
+            status.text = KBL("剪贴板里没有配置串。先在 App 的「模型」页点「复制配置串（给键盘）」。",
+                              "No config string in the clipboard. Copy it from the app's Models page first.")
+            return
+        }
+        guard let data = Data(base64Encoded: String(raw.dropFirst(5))),
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: String] else {
+            status.text = KBL("配置串解析失败，请重新复制一次。", "Could not parse the config string; please copy it again.")
+            return
+        }
+        if let b = obj["base"], !b.isEmpty { baseField.text = b }
+        if let k = obj["key"], !k.isEmpty { keyField.text = k }
+        if let m = obj["model"], !m.isEmpty { modelField.text = m }
+        status.text = KBL("已从配置串填入 ✓ 点「保存」生效", "Filled from the config string ✓ tap Save")
     }
 
     private func save() {

@@ -57,6 +57,20 @@ struct ProvidersView: View {
 
             TestConnectionButton(kind: .generation)
 
+            // 免费 Apple ID 用不了 App Group，键盘读不到这里的配置。
+            // 这一串就是给键盘的「人工共享容器」：复制 → 键盘面板「从 App 粘贴配置」。
+            Button {
+                let payload = ["base": store.config.genBase,
+                               "key": store.config.genKey,
+                               "model": store.config.genModel]
+                if let data = try? JSONSerialization.data(withJSONObject: payload) {
+                    UIPasteboard.general.string = "JEV1:" + data.base64EncodedString()
+                }
+            } label: {
+                Label(jevLocalized(store.language, zh: "复制配置串（给键盘）", en: "Copy config for keyboard"),
+                      systemImage: "doc.on.doc")
+            }
+
             Text(genStatusLine)
                 .font(.caption2).foregroundStyle(.secondary)
         } header: {

@@ -63,11 +63,11 @@ struct SetupView: View {
             row(icon: "externaldrive.connected.to.line.below", title: jevLocalized(store.language, zh: "App Group 共享", en: "App Group sharing"),
                 ok: groupOK, detail: groupOK
                     ? jevLocalized(store.language, zh: "配置可以同步到键盘", en: "Configuration syncs to the keyboard")
-                    : jevLocalized(store.language, zh: "共享容器不可用：这次安装的签名没带上 App Group 权限，键盘读不到 App 里填的 Key。用 Sideloadly 重签安装（保持 App Group 支持开启；免费账号有 App Group 额度）后重试", en: "Shared container unavailable: this install's signature lacks the App Group entitlement, so the keyboard cannot read the key. Re-sign with Sideloadly (keep App Group support on) and reinstall."))
+                    : jevLocalized(store.language, zh: "免费 Apple ID 用不了 App Group（苹果的能力限制，任何重签工具都改不了），键盘读不到这里填的 Key。不影响使用：上面的配置请点下面「复制配置串（给键盘）」，再在键盘面板点「从 App 粘贴配置」；也可以直接在键盘上点「🔑 在键盘里填 API Key」填一份。", en: "Free Apple IDs cannot use App Groups (an Apple capability limit no signing tool can change), so the keyboard cannot read the key entered here. Not a blocker: tap Copy config for keyboard below, then Paste from app in the keyboard panel — or fill the key directly with the 🔑 button in the keyboard."))
         } header: {
             Text(jevLocalized(store.language, zh: "状态", en: "Status"))
         } footer: {
-            Text(jevLocalized(store.language, zh: "键盘每次被唤起时会回写状态，这里每 2 秒刷新。排查口诀：用过键盘但「键盘已启用」一直是灰的，说明 App 和键盘的共享通道断了（签名缺 App Group 权限），填多少遍 Key 键盘都读不到。", en: "The keyboard writes its status when opened. This view refreshes every 2 seconds. Debug rule: if you have used the keyboard but \"Keyboard enabled\" stays gray, the App↔keyboard shared channel is broken (signature missing the App Group entitlement) — no key you enter will reach the keyboard."))
+            Text(jevLocalized(store.language, zh: "键盘每次被唤起时会回写状态，这里每 2 秒刷新。共享通道「App Group 共享」只对付费开发者账号（$99/年）或 iOS ≤17.0 的 TrollStore 可用；免费账号走键盘内配置，功能完全一样，只是要各填一次。", en: "The keyboard writes its status when opened. This view refreshes every 2 seconds. The App Group shared channel requires a paid developer account ($99/yr) or TrollStore on iOS ≤17.0; on a free account use the in-keyboard config — same functionality, just entered twice."))
         }
     }
 
@@ -90,7 +90,7 @@ struct SetupView: View {
         Section(jevLocalized(store.language, zh: "三步启用", en: "Set up in three steps")) {
             step(1, jevLocalized(store.language, zh: "设置 → 通用 → 键盘 → 键盘 → 添加新键盘 → Jev 键盘", en: "Settings → General → Keyboard → Keyboards → Add New Keyboard → Jev Keyboard"))
             step(2, jevLocalized(store.language, zh: "回到「键盘」列表，点 Jev 键盘 → 打开「允许完全访问」", en: "Return to Keyboards, select Jev Keyboard, and turn on Full Access"))
-            step(3, jevLocalized(store.language, zh: "去「模型」页填一个 API Key（如智谱 glm-4-flash），然后在聊天 App 中使用：长按消息 → 复制 → 键盘上点「分析剪贴板」", en: "Add an API key on Models (e.g. Zhipu glm-4-flash), then in any chat app long-press a message, copy it, and tap Analyze Clipboard"))
+            step(3, jevLocalized(store.language, zh: "去「模型」页填一个 API Key（如智谱 glm-4-flash）；免费账号键盘读不到 App 的配置，所以再在键盘上点「🔑 在键盘里填 API Key」填同一套（或点这里的「复制配置串（给键盘）」→ 键盘面板「从 App 粘贴配置」）。然后在聊天 App 里：长按消息 → 复制 → 点「分析剪贴板」", en: "Add an API key on Models (e.g. Zhipu glm-4-flash), then in any chat app long-press a message, copy it, and tap Analyze Clipboard"))
         }
     }
 

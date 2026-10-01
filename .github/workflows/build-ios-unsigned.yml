@@ -264,4 +264,4 @@ jobs:
           git push -f origin ci-log && echo "日志已推送到 ci-log 分支"
 
 # build trigger: appgroup-diagnostics 0e912c3
-# build 2026-10-01 r3: 共享容器警告补长按兜底指引
+# build 2026-10-01 r4: 免费账号无 App Group —— 键盘内填 Key 显眼入口 + 配置串互传
