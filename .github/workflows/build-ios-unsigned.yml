@@ -232,19 +232,42 @@ jobs:
           set -uo pipefail
           OUT=/tmp/ipa-out
           rm -rf "$OUT" && mkdir -p "$OUT"
-          cp JevJarvis-unsigned.ipa build-info.txt "$OUT"/
+          cp JevJarvis-unsigned.ipa "$OUT"/ || echo "!! ipa 复制失败"
+          [ -f build-info.txt ] && cp build-info.txt "$OUT"/ || echo "!! build-info.txt 缺失"
           cd "$OUT"
           git init -q
           git checkout -q -b builds
           git config user.name "ci-build"
           git config user.email "ci-build@users.noreply.github.com"
-          git add -A
-          git commit -q -m "build: ${GITHUB_SHA:0:8}"
-          git push -f -q \
-            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" builds
-          echo "已推送 ipa 到 builds 分支（每次覆盖，只保留最新一份）"
-          echo "手机 Safari 直接打开这个地址即可下载："
-          echo "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/builds/JevJarvis-unsigned.ipa"
+          git add -A -f
+          git commit -q -m "build: ${GITHUB_SHA:0:8}" || echo "!! 没有可提交的改动"
+          echo "本地提交: $(git log --oneline -1)"
+          # 之前这一步失败会被 continue-on-error 静默掉（构建仍是绿的但手机端拿到旧包）。
+          # 现在：重试 5 次，并把成功/失败与错误原文一并写进 build.log（ci-log 分支可读）。
+          OK=0
+          for i in 1 2 3 4 5; do
+            if git push -f \
+              "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" builds \
+              > /tmp/push-builds.log 2>&1; then
+              OK=1
+              break
+            fi
+            echo "第 $i 次推送失败，重试…"
+            tail -5 /tmp/push-builds.log
+            sleep 6
+          done
+          {
+            echo ""
+            echo ">>> builds 分支推送: $([ "$OK" = "1" ] && echo OK || echo FAILED) (run=${GITHUB_RUN_ID} sha=${GITHUB_SHA:0:8})"
+            [ -f /tmp/push-builds.log ] && tail -25 /tmp/push-builds.log
+          } >> "$GITHUB_WORKSPACE/build.log" 2>/dev/null || true
+          if [ "$OK" = "1" ]; then
+            echo "已推送 ipa 到 builds 分支（每次覆盖，只保留最新一份）"
+            echo "手机 Safari 直接打开这个地址即可下载："
+            echo "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/builds/JevJarvis-unsigned.ipa"
+          else
+            echo "!! builds 分支推送失败 —— 手机端会拿到旧包，请看 ci-log 分支的尾部"
+          fi
 
       # 没有 Mac 的人看不到 Actions 日志（下载日志要登录 GitHub）。
       # 把日志推回一个分支，任何人一条 curl 就能读，排查不用来回问。
@@ -259,9 +282,12 @@ jobs:
           git config user.name "ci-diagnostics"
           git config user.email "ci-diagnostics@users.noreply.github.com"
           git checkout -B ci-log
+          # ipa 顺带也放这里：builds 分支万一推失败，手机端还有个备用下载地址
+          # https://raw.githubusercontent.com/<owner>/<repo>/ci-log/JevJarvis-unsigned.ipa
           git add -f build.log build-info.txt
+          if [ -f JevJarvis-unsigned.ipa ]; then git add -f JevJarvis-unsigned.ipa; fi
           git commit -q -m "ci: 构建日志 run=${GITHUB_RUN_ID} sha=${GITHUB_SHA:0:8}" || true
           git push -f origin ci-log && echo "日志已推送到 ci-log 分支"
 
 # build trigger: appgroup-diagnostics 0e912c3
-# build 2026-10-01 r5: 判断层 Key 本地兜底（键盘面板两层六栏 + 配置串 JEV2）
+# build 2026-10-01 r6: builds 推送加重试与诊断 + ci-log 备份 ipa
