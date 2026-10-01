@@ -57,19 +57,7 @@ struct ProvidersView: View {
 
             TestConnectionButton(kind: .generation)
 
-            // 免费 Apple ID 用不了 App Group，键盘读不到这里的配置。
-            // 这一串就是给键盘的「人工共享容器」：复制 → 键盘面板「从 App 粘贴配置」。
-            Button {
-                let payload = ["base": store.config.genBase,
-                               "key": store.config.genKey,
-                               "model": store.config.genModel]
-                if let data = try? JSONSerialization.data(withJSONObject: payload) {
-                    UIPasteboard.general.string = "JEV1:" + data.base64EncodedString()
-                }
-            } label: {
-                Label(jevLocalized(store.language, zh: "复制配置串（给键盘）", en: "Copy config for keyboard"),
-                      systemImage: "doc.on.doc")
-            }
+            copyConfigButton
 
             Text(genStatusLine)
                 .font(.caption2).foregroundStyle(.secondary)
@@ -77,6 +65,32 @@ struct ProvidersView: View {
             Text(jevLocalized(store.language, zh: "生成层（候选回复，必配）", en: "Generation (required for suggestions)"))
         } footer: {
             Text(jevLocalized(store.language, zh: "必须填写你自己的 API Key；本项目不提供生成服务或中转。别用思考型模型（思考会占满额度导致 0 条候选）。地址带不带 /v1 都能拼对；端点需要额外字段关闭思考时，可在上面填写 JSON。", en: "Enter your own API key. This project does not provide a generation service or relay. Avoid reasoning models that spend the whole budget. URLs work with or without /v1; use the extra JSON field if your endpoint needs reasoning disabled."))
+        }
+    }
+
+    /// 免费 Apple ID 用不了 App Group，键盘读不到这里的配置。
+    /// 这一串就是给键盘的「人工共享容器」：复制 → 键盘面板「从 App 粘贴配置」。
+    /// JEV2 同时装生成层和判断层（判断层同样受 App Group 限制，必须一起带过去）；
+    /// 旧版键盘只认 JEV1，会忽略多余字段，不会因此报错。
+    private var copyConfigButton: some View {
+        Button {
+            let payload: [String: String] = [
+                "v": "2",
+                "kind": store.config.genKind.rawValue,
+                "base": store.config.genBase,
+                "key": store.config.genKey,
+                "model": store.config.genModel,
+                "judgeBase": store.config.judgeBase,
+                "judgeKey": store.config.judgeKey,
+                "judgeModel": store.config.judgeModel,
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: payload) {
+                UIPasteboard.general.string = "JEV2:" + data.base64EncodedString()
+            }
+        } label: {
+            Label(jevLocalized(store.language, zh: "复制配置串（给键盘 · 两层一起）",
+                               en: "Copy config for keyboard (both layers)"),
+                  systemImage: "doc.on.doc")
         }
     }
 
@@ -128,6 +142,8 @@ struct ProvidersView: View {
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
                 .font(.footnote)
+
+            copyConfigButton
 
             TestConnectionButton(kind: .judge)
 

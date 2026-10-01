@@ -66,7 +66,7 @@ final class JevPipeline {
                 : "消息内容为空：请先在聊天里长按消息点「复制」，或把要回的话输进输入框"
             return out
         }
-        guard JevStore.groupContainerAvailable || KBLocalConfig.hasLocal else {
+        guard JevStore.groupContainerAvailable || KBLocalConfig.hasAny else {
             // 共享通道断了：App 与键盘各持一个私有容器，配置永远传不过去。
             // 这时候提示「去填 Key」是死路——必须先修签名。
             out.fatalError = JevStore.loadLanguage() == .english
@@ -143,8 +143,8 @@ final class JevPipeline {
         out.judge = judgeResult
         if judge.isConfigured, judgeResult == nil {
             out.notices.append(JevStore.loadLanguage() == .english
-                ? "Judge layer unavailable; drafted without intent (candidates unaffected)"
-                : "判断层没响应，已盲起草（不影响出候选）")
+                ? "Judge layer unavailable; drafted without intent. Tap 🔑 Enter API key to fill the judge key too."
+                : "判断层没响应，已盲起草（不影响出候选）。点「🔑 在键盘里填 API Key」可以把判断层的 Key 一起补上。")
         }
 
         // 2b) 高风险消息才用意图重写一版：盲起草在平常用消息上够用，风险高的才值得多花一次往返。

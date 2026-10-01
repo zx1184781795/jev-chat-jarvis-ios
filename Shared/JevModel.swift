@@ -217,19 +217,39 @@ enum KBLocalConfig {
     static let kBase = "kb.local.genBase.v1"
     static let kKey = "kb.local.genKey.v1"
     static let kModel = "kb.local.genModel.v1"
+    static let kKind = "kb.local.genKind.v1"
+    static let kJudgeBase = "kb.local.judgeBase.v1"
+    static let kJudgeKey = "kb.local.judgeKey.v1"
+    static let kJudgeModel = "kb.local.judgeModel.v1"
 
-    /// 键盘本地是否存了兜底 Key
+    /// 键盘本地是否存了兜底的生成层 Key
     static var hasLocal: Bool {
         !(d.string(forKey: kKey) ?? "").isEmpty
     }
 
+    /// 键盘本地是否存了兜底的判断层 Key
+    static var hasLocalJudge: Bool {
+        !(d.string(forKey: kJudgeKey) ?? "").isEmpty
+    }
+
+    /// 任意一层有本地兜底。管线门禁用这个放行 —— 共享容器断链时的唯一通路。
+    static var hasAny: Bool { hasLocal || hasLocalJudge }
+
     /// 键盘侧唯一入口：共享层拿得到就原样返回；拿不到且本地有兜底才补。
+    /// 两层独立判定：生成层缺 Key 补生成层，判断层缺 Key 补判断层。
+    /// （判断层同样受免费账号 App Group 限制，只兜生成层等于键盘永远没有 Jev。）
     static func resolve() -> JevConfig {
         var cfg = JevStore.loadConfig()
         if cfg.genKey.isEmpty, let k = d.string(forKey: kKey), !k.isEmpty {
+            if let g = d.string(forKey: kKind), let kind = APIKind(rawValue: g) { cfg.genKind = kind }
             if let b = d.string(forKey: kBase), !b.isEmpty { cfg.genBase = b }
             cfg.genKey = k
             if let m = d.string(forKey: kModel), !m.isEmpty { cfg.genModel = m }
+        }
+        if cfg.judgeKey.isEmpty, let k = d.string(forKey: kJudgeKey), !k.isEmpty {
+            if let b = d.string(forKey: kJudgeBase), !b.isEmpty { cfg.judgeBase = b }
+            cfg.judgeKey = k
+            if let m = d.string(forKey: kJudgeModel), !m.isEmpty { cfg.judgeModel = m }
         }
         return cfg
     }
