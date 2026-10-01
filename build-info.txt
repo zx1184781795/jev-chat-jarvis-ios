@@ -1,0 +1,14 @@
+构建时间: 2026-10-01 15:40:46 UTC
+提交: 7bc45c9047e888360c517b3141881376d8691aa6
+配置: Release
+宿主 App Bundle ID : com.zx1184781795.jevjarvis
+键盘扩展 Bundle ID: com.zx1184781795.jevjarvis.keyboard
+App Group: group.com.zx1184781795.jevjarvis
+主版本: 0.1.0 (build 2)
+最低系统: iOS 16.0
+
+Sideloadly 里 Bundle ID 会自动读出，通常不用手填。
+App 和键盘扩展必须共用同一个 App Group，上面这行就是它。
+
+ipa SHA256:
+  6ac8436cc63f26de9f9917cc5506f28e77bea83a930bf6a1d87fa511a9af9d7d
