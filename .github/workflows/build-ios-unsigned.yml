@@ -290,4 +290,4 @@ jobs:
           git push -f origin ci-log && echo "日志已推送到 ci-log 分支"
 
 # build trigger: appgroup-diagnostics 0e912c3
-# build 2026-10-01 r6: builds 推送加重试与诊断 + ci-log 备份 ipa
+# build 2026-10-01 r7: 面板去输入框改粘贴流（键盘扩展无 first responder）+ frame 布局防塌缩

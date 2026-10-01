@@ -399,7 +399,7 @@ final class KeyboardViewController: UIInputViewController {
             // 免费 Apple ID 拿不到 App Group（苹果的能力限制，任何重签工具都改不了），
             // 键盘本地这份配置才是免费账号下唯一走得通的通路——所以入口必须显眼，
             // 不能藏在「长按 1.5 秒」这种没人知道的手势里。
-            let fixBtn = KB.button(L("🔑 在键盘里填 API Key（生成层 / 判断层）", "🔑 Enter API key here (generation / judge)"),
+            let fixBtn = KB.button(L("🔑 配置 API Key（生成层 / 判断层）", "🔑 Enter API key here (generation / judge)"),
                                    icon: "key.fill", primary: true,
                                    font: .systemFont(ofSize: 14, weight: .semibold))
             fixBtn.heightAnchor.constraint(equalToConstant: 38).isActive = true
@@ -407,10 +407,10 @@ final class KeyboardViewController: UIInputViewController {
             vstack.addArrangedSubview(fixBtn)
 
             let why = JevStore.groupContainerAvailable
-                ? L("⚠️ 还没配齐：不用打开 App——点上面这个按钮，生成层和判断层的地址 / Key / 模型都能在键盘里填（也可以先在 App 的「模型」页点「复制配置串（给键盘）」，再回来点「从 App 粘贴配置」，两层一次带过来）。",
-                    "⚠️ Not fully configured: no need to open the app — tap the button above to fill both layers right here (or copy the config string from the app's Models page and paste it here; it carries both layers).")
-                : L("⚠️ App Group 共享容器不可用：这是免费 Apple ID 的固有限制（苹果不向个人团队发放 App Group 能力，换任何重签工具都一样），所以键盘读不到 App 里填的 Key。点上面这个按钮在键盘里填一份即可——不依赖共享容器，填完立刻能用。想让它俩自动共享，需要付费开发者账号（$99/年）或 iOS ≤17.0 的 TrollStore。",
-                    "⚠️ App Group shared container unavailable: this is an inherent limit of free Apple IDs (Apple does not grant App Groups to personal teams, and no signing tool can change that), so the keyboard cannot read the key saved in the app. Tap the button above and fill the key right here — no shared container needed. For automatic sharing you need a paid developer account or TrollStore on iOS ≤17.0.")
+                ? L("⚠️ 还没配齐：不用打开 App——点上面这个按钮，配置走免共享通路：先在 App「模型」页点「复制配置串（给键盘）」→ 点上面按钮 → 点「粘贴」，两层一次带过来。",
+                    "⚠️ Not fully configured: no need to open the app — tap the button above, then tap Paste (paste saves immediately) (or copy the config string from the app's Models page and paste it here; it carries both layers).")
+                : L("⚠️ App Group 共享容器不可用：这是免费 Apple ID 的固有限制（苹果不向个人团队发放 App Group 能力，换任何重签工具都一样），所以键盘读不到 App 里填的 Key。点上面这个按钮 → 「粘贴」App 复制来的配置串即可——不依赖共享容器，粘贴即保存。想让它俩自动共享，需要付费开发者账号（$99/年）或 iOS ≤17.0 的 TrollStore。",
+                    "⚠️ App Group shared container unavailable: this is an inherent limit of free Apple IDs (Apple does not grant App Groups to personal teams, and no signing tool can change that), so the keyboard cannot read the key saved in the app. Tap the button above and paste the config string — no shared container needed. For automatic sharing you need a paid developer account or TrollStore on iOS ≤17.0.")
             let warn = KB.label(why, font: .systemFont(ofSize: 12),
                                 color: JevStore.groupContainerAvailable ? .systemOrange : .systemRed, lines: 0)
             vstack.addArrangedSubview(warn)
@@ -689,7 +689,7 @@ final class KeyboardViewController: UIInputViewController {
         var rows: [UIView] = [title, body]
         if !JevDraft(cfg: KBLocalConfig.resolve()).isConfigured
             || !JevJudge(cfg: KBLocalConfig.resolve()).isConfigured {
-            let fix = KB.button(L("🔑 在键盘里填 API Key（生成层 / 判断层）", "🔑 Enter API key here (generation / judge)"),
+            let fix = KB.button(L("🔑 配置 API Key（生成层 / 判断层）", "🔑 Enter API key here (generation / judge)"),
                                 icon: "key.fill", primary: true,
                                 font: .systemFont(ofSize: 14, weight: .semibold))
             fix.heightAnchor.constraint(equalToConstant: 36).isActive = true
@@ -786,13 +786,12 @@ final class KeyboardViewController: UIInputViewController {
 }
 
 
-// MARK: - 本地 Key 面板（长按键盘 1.5 秒呼出）
+// MARK: - 本地 Key 面板（点 🔑 按钮或长按 1.5 秒呼出）
 
 /// 面板是独立类，看不到键盘控制器私有的 L()，给一个文件级替身（语言跟随应用设置）。
 private func KBL(_ zh: String, _ en: String) -> String {
     JevStore.loadLanguage() == .english ? en : zh
 }
-
 
 extension KeyboardViewController {
     @objc func openLocalKeyPanel() {
@@ -800,6 +799,11 @@ extension KeyboardViewController {
     }
 }
 
+/// 免费账号下的免共享配置面板。上一版的两个教训写进设计里：
+/// 1. 不放 UITextField —— 键盘扩展拿不到 first responder（苹果硬限制），输入框打不了字；
+///    配置只走「App 复制配置串 → 这里粘贴」一条通路，粘贴即保存。
+/// 2. 卡片尺寸构建时写死（frame 布局）—— 上一版只给 card 一个 ≤ 最大高的不等式，
+///    Auto Layout 解歧时把卡片塌没了，用户只看到一层暗罩。
 final class KBLocalKeyPanel: UIView {
     static func show(in vc: UIViewController) {
         guard !vc.view.subviews.contains(where: { $0 is KBLocalKeyPanel }) else { return }
@@ -808,15 +812,8 @@ final class KBLocalKeyPanel: UIView {
         vc.view.addSubview(panel)
     }
 
-    private let baseField = UITextField()
-    private let keyField = UITextField()
-    private let modelField = UITextField()
-    private let judgeBaseField = UITextField()
-    private let judgeKeyField = UITextField()
-    private let judgeModelField = UITextField()
+    private let states = UILabel()
     private let status = UILabel()
-    /// 生成层协议：面板不做选择器，从配置串 / 本地继承，默认 OpenAI 兼容
-    private var localKind: APIKind = .openai
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -826,233 +823,136 @@ final class KBLocalKeyPanel: UIView {
 
     required init?(coder: NSCoder) { fatalError("unsupported") }
 
+    private func label(_ text: String, _ size: CGFloat, _ weight: UIFont.Weight,
+                       _ color: UIColor) -> UILabel {
+        let l = UILabel()
+        l.text = text
+        l.font = .systemFont(ofSize: size, weight: weight)
+        l.textColor = color
+        l.numberOfLines = 0
+        return l
+    }
+
+    private func button(_ title: String, _ bg: UIColor, _ height: CGFloat,
+                        _ action: @escaping () -> Void) -> UIButton {
+        let b = UIButton(type: .system)
+        b.setTitle(title, for: .normal)
+        b.setTitleColor(.white, for: .normal)
+        b.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+        b.titleLabel?.numberOfLines = 0
+        b.backgroundColor = bg
+        b.layer.cornerRadius = 9
+        b.heightAnchor.constraint(equalToConstant: height).isActive = true
+        b.addAction(UIAction { _ in action() }, for: .touchUpInside)
+        return b
+    }
+
     private func buildPanel() {
-        let card = UIView()
-        card.translatesAutoresizingMaskIntoConstraints = false
+        let card = UIView(frame: bounds.insetBy(dx: 12, dy: 10))
+        card.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         card.backgroundColor = UIColor(white: 0.14, alpha: 1)
         card.layer.cornerRadius = 14
         addSubview(card)
-        NSLayoutConstraint.activate([
-            card.centerXAnchor.constraint(equalTo: centerXAnchor),
-            card.centerYAnchor.constraint(equalTo: centerYAnchor),
-            card.widthAnchor.constraint(equalTo: widthAnchor, constant: -24),
-            // 键盘高度就那么大，两层六栏塞不下时靠滚动，不能把按钮挤出屏幕
-            card.heightAnchor.constraint(lessThanOrEqualTo: heightAnchor, constant: -10),
-        ])
 
-        let scroll = UIScrollView()
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.alwaysBounceVertical = true
-        scroll.keyboardDismissMode = .interactive
-        card.addSubview(scroll)
+        let title = label(KBL("键盘配置（免共享通路）", "Keyboard config (no shared container)"),
+                          13, .semibold, .white)
+        let close = button(KBL("✕ 关闭", "✕ Close"), UIColor(white: 0.3, alpha: 1), 28) { [weak self] in
+            self?.removeFromSuperview()
+        }
+        let top = UIStackView(arrangedSubviews: [title, close])
+        top.axis = .horizontal
+        top.spacing = 8
+        top.alignment = .center
 
-        let stack = UIStackView()
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .vertical
-        stack.spacing = 9
-        scroll.addSubview(stack)
-        NSLayoutConstraint.activate([
-            scroll.topAnchor.constraint(equalTo: card.topAnchor, constant: 12),
-            scroll.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
-            scroll.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
-            scroll.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12),
-            stack.topAnchor.constraint(equalTo: scroll.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: scroll.bottomAnchor),
-            stack.widthAnchor.constraint(equalTo: scroll.widthAnchor),
-        ])
+        states.font = .systemFont(ofSize: 12)
+        states.numberOfLines = 0
+        refreshStates()
 
-        let title = UILabel()
-        title.text = KBL("键盘内直接填 Key", "Fill the key right here")
-        title.font = .systemFont(ofSize: 13, weight: .semibold)
-        title.textColor = .white
-        title.numberOfLines = 0
-
-        let shared = JevStore.loadConfig()
-        let note = UILabel()
-        note.font = .systemFont(ofSize: 11)
-        note.textColor = UIColor(white: 0.75, alpha: 1)
-        note.numberOfLines = 0
-        let sharedState = shared.genKey.isEmpty
-            ? KBL("共享层没有 Key（免费 Apple ID 用不了 App Group，属于苹果限制）。下面填一份，或先在 App「模型」页点「复制配置串（给键盘）」再点下面的「从 App 粘贴配置」。",
-                  "No key in the shared layer (free Apple IDs cannot use App Groups — an Apple restriction). Fill it below, or copy the config string from the app and paste it here.")
-            : KBL("共享层 Key 已就绪；这里填的是兜底，共享层优先。", "Shared key present; this is only a fallback.")
-        note.text = sharedState
-
-        let d = KBLocalConfig.d
-        baseField.text = d.string(forKey: KBLocalConfig.kBase)
-        if (baseField.text ?? "").isEmpty { baseField.text = "https://api.deepseek.com" }
-        baseField.placeholder = KBL("接口地址（如 https://api.deepseek.com）", "Base URL")
-        style(baseField)
-
-        keyField.isSecureTextEntry = true
-        keyField.text = d.string(forKey: KBLocalConfig.kKey)
-        keyField.placeholder = KBL("API Key（sk-…）", "API Key")
-        style(keyField)
-
-        modelField.text = d.string(forKey: KBLocalConfig.kModel)
-        if (modelField.text ?? "").isEmpty { modelField.text = "deepseek-chat" }
-        modelField.placeholder = KBL("模型名（如 deepseek-chat）", "Model name")
-        style(modelField)
-
-        // 判断层（Jev）：共享容器读不到时，同样需要键盘本地一份，否则永远「未配置判断层」
-        if let g = d.string(forKey: KBLocalConfig.kKind), let kind = APIKind(rawValue: g) { localKind = kind }
-
-        judgeBaseField.text = d.string(forKey: KBLocalConfig.kJudgeBase)
-        if (judgeBaseField.text ?? "").isEmpty { judgeBaseField.text = "https://openrouter.ai/api/alpha/decisions" }
-        judgeBaseField.placeholder = KBL("判断层地址（OpenRouter 网关）", "Judge base URL")
-        style(judgeBaseField)
-
-        judgeKeyField.isSecureTextEntry = true
-        judgeKeyField.text = d.string(forKey: KBLocalConfig.kJudgeKey)
-        judgeKeyField.placeholder = KBL("判断层 API Key（sk-or-…）", "Judge API key")
-        style(judgeKeyField)
-
-        judgeModelField.text = d.string(forKey: KBLocalConfig.kJudgeModel)
-        if (judgeModelField.text ?? "").isEmpty { judgeModelField.text = "typesafe/jev-1.13" }
-        judgeModelField.placeholder = KBL("判断层模型名", "Judge model name")
-        style(judgeModelField)
-
-        let genHead = sectLabel(KBL("生成层（必填 · 出候选回复）", "Generation (required)"))
-        let judgeHead = sectLabel(KBL("判断层（可留空 · 意图 / 风险 / 排序）", "Judge (optional)"))
-        let judgeNote = subHint(KBL("判断层的 Key 和生成层可以不是同一家；两层都读不到共享容器时，各填一份即可。留空则跳过判断、只出候选。",
-                                    "The judge key may come from a different provider. Leave it blank to draft without judging."))
+        let steps = label(
+            KBL("第 1 步：打开 Jev App →「模型」页 → 点「复制配置串（给键盘）」。\n第 2 步：回这里点下面的粘贴。粘贴即保存，无需别的操作。",
+                "Step 1: in the Jev app, Models page, tap Copy config string.\nStep 2: come back and tap Paste below. Pasting saves immediately."),
+            11, .regular, UIColor(white: 0.72, alpha: 1))
 
         status.font = .systemFont(ofSize: 11)
-        status.textColor = UIColor(red: 0.5, green: 0.85, blue: 0.5, alpha: 1)
         status.numberOfLines = 0
+        status.textColor = UIColor(red: 0.5, green: 0.85, blue: 0.5, alpha: 1)
 
-        let row = UIStackView()
-        row.axis = .horizontal
-        row.spacing = 10
-        row.distribution = .fillEqually
-        let save = UIButton(type: .system)
-        save.setTitle(KBL("保存", "Save"), for: .normal)
-        save.setTitleColor(.white, for: .normal)
-        save.backgroundColor = UIColor(red: 0.25, green: 0.45, blue: 0.95, alpha: 1)
-        save.layer.cornerRadius = 8
-        save.heightAnchor.constraint(equalToConstant: 34).isActive = true
-        save.addAction(UIAction { [weak self] _ in self?.save() }, for: .touchUpInside)
-        let close = UIButton(type: .system)
-        close.setTitle(KBL("关闭", "Close"), for: .normal)
-        close.setTitleColor(.white, for: .normal)
-        close.backgroundColor = UIColor(white: 0.3, alpha: 1)
-        close.layer.cornerRadius = 8
-        close.heightAnchor.constraint(equalToConstant: 34).isActive = true
-        close.addAction(UIAction { [weak self] _ in self?.removeFromSuperview() }, for: .touchUpInside)
-        let pasteBtn = UIButton(type: .system)
-        pasteBtn.setTitle(KBL("从 App 粘贴配置", "Paste from app"), for: .normal)
-        pasteBtn.setTitleColor(.white, for: .normal)
-        pasteBtn.titleLabel?.font = .systemFont(ofSize: 13)
-        pasteBtn.backgroundColor = UIColor(white: 0.32, alpha: 1)
-        pasteBtn.layer.cornerRadius = 8
-        pasteBtn.heightAnchor.constraint(equalToConstant: 34).isActive = true
-        pasteBtn.addAction(UIAction { [weak self] _ in self?.pasteFromClipboard() }, for: .touchUpInside)
-        row.addArrangedSubview(save)
-        row.addArrangedSubview(pasteBtn)
-        row.addArrangedSubview(close)
-
-        for v in [title, note, genHead, baseField, keyField, modelField,
-                  judgeHead, judgeNote, judgeBaseField, judgeKeyField, judgeModelField,
-                  status, row] as [UIView] {
-            stack.addArrangedSubview(v)
+        let paste = button(
+            KBL("📋 粘贴配置串（生成层 + 判断层）", "📋 Paste config string (generation + judge)"),
+            UIColor(red: 0.25, green: 0.45, blue: 0.95, alpha: 1), 40) { [weak self] in
+            self?.pasteFromClipboard()
         }
+        let clear = button(KBL("清除本地配置", "Clear local config"),
+                           UIColor(white: 0.3, alpha: 1), 32) { [weak self] in
+            self?.clearLocal()
+        }
+
+        let stack = UIStackView(arrangedSubviews: [top, states, steps, status, paste, clear])
+        stack.axis = .vertical
+        stack.spacing = 9
+        stack.frame = card.bounds.insetBy(dx: 14, dy: 12)
+        stack.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        card.addSubview(stack)
     }
 
-    private func style(_ f: UITextField) {
-        f.backgroundColor = UIColor(white: 0.24, alpha: 1)
-        f.textColor = .white
-        f.font = .systemFont(ofSize: 12)
-        f.layer.cornerRadius = 8
-        f.autocorrectionType = .no
-        f.autocapitalizationType = .none
-        f.returnKeyType = .done
-        f.heightAnchor.constraint(equalToConstant: 34).isActive = true
-        f.addAction(UIAction { [weak f] _ in f?.resignFirstResponder() }, for: .editingDidEndOnExit)
+    private func refreshStates() {
+        func mark(_ ok: Bool) -> String { ok ? "✓ 已配置" : "✗ 未配置" }
+        states.text = KBL(
+            "生成层：\(mark(KBLocalConfig.hasLocal))\n判断层：\(mark(KBLocalConfig.hasLocalJudge))（未配置则跳过判断，只出候选）",
+            "Generation: \(KBLocalConfig.hasLocal ? "set" : "not set")\nJudge: \(KBLocalConfig.hasLocalJudge ? "set" : "not set") (skipped when unset)")
+        states.textColor = KBLocalConfig.hasLocal
+            ? UIColor(red: 0.5, green: 0.85, blue: 0.5, alpha: 1)
+            : UIColor(red: 0.95, green: 0.75, blue: 0.4, alpha: 1)
     }
 
-    private func sectLabel(_ text: String) -> UILabel {
-        let l = UILabel()
-        l.text = text
-        l.font = .systemFont(ofSize: 12, weight: .semibold)
-        l.textColor = UIColor(white: 0.96, alpha: 1)
-        l.numberOfLines = 0
-        return l
-    }
-
-    private func subHint(_ text: String) -> UILabel {
-        let l = UILabel()
-        l.text = text
-        l.font = .systemFont(ofSize: 10.5)
-        l.textColor = UIColor(white: 0.66, alpha: 1)
-        l.numberOfLines = 0
-        return l
-    }
-
-    /// 从 App 复制来的配置串里恢复配置，两层一起。
+    /// 从 App 复制来的配置串里恢复配置，两层一起，粘贴即保存。
     /// 格式：JEV2:<base64(JSON{base,key,model,kind,judgeBase,judgeKey,judgeModel})>；
     /// 旧版 JEV1:<base64(JSON{base,key,model})> 只含生成层，同样兼容。
     /// 完全绕开 App Group —— 剪贴板是免费账号下唯一的跨进程通道。
     private func pasteFromClipboard() {
-        guard let raw = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
-              raw.hasPrefix("JEV1:") || raw.hasPrefix("JEV2:") else {
-            status.text = KBL("剪贴板里没有配置串。先在 App 的「模型」页点「复制配置串（给键盘）」。",
-                              "No config string in the clipboard. Copy it from the app's Models page first.")
+        let raw = (UIPasteboard.general.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard raw.hasPrefix("JEV1:") || raw.hasPrefix("JEV2:") else {
+            status.text = KBL("剪贴板里没有配置串。先去 Jev App 的「模型」页点「复制配置串（给键盘）」。",
+                              "No config string found. Copy it from the app's Models page first.")
             return
         }
         guard let data = Data(base64Encoded: String(raw.dropFirst(5))),
               let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: String] else {
-            status.text = KBL("配置串解析失败，请重新复制一次。", "Could not parse the config string; please copy it again.")
-            return
-        }
-        var filled: [String] = []
-        if let k = obj["key"], !k.isEmpty {
-            keyField.text = k
-            filled.append(KBL("生成层", "generation"))
-        }
-        if let b = obj["base"], !b.isEmpty { baseField.text = b }
-        if let m = obj["model"], !m.isEmpty { modelField.text = m }
-        if let g = obj["kind"], let kind = APIKind(rawValue: g) { localKind = kind }
-        if let k = obj["judgeKey"], !k.isEmpty {
-            judgeKeyField.text = k
-            filled.append(KBL("判断层", "judge"))
-        }
-        if let b = obj["judgeBase"], !b.isEmpty { judgeBaseField.text = b }
-        if let m = obj["judgeModel"], !m.isEmpty { judgeModelField.text = m }
-        status.text = filled.isEmpty
-            ? KBL("配置串里没有 Key", "No key inside the config string")
-            : KBL("已填入 \(filled.joined(separator: " + ")) ✓ 点「保存」生效",
-                  "Filled \(filled.joined(separator: " + ")) ✓ tap Save")
-    }
-
-    private func save() {
-        let key = (keyField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let judgeKey = (judgeKeyField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty || !judgeKey.isEmpty else {
-            status.text = KBL("两层 Key 都是空的，至少填一个", "Both keys are empty; fill at least one")
+            status.text = KBL("配置串解析失败，请回 App 重新复制一次。",
+                              "Could not parse the config string; copy it again.")
             return
         }
         let d = KBLocalConfig.d
-        if !key.isEmpty {
-            d.set(key, forKey: KBLocalConfig.kKey)
-            let base = (baseField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !base.isEmpty { d.set(base, forKey: KBLocalConfig.kBase) }
-            let model = (modelField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !model.isEmpty { d.set(model, forKey: KBLocalConfig.kModel) }
-            d.set(localKind.rawValue, forKey: KBLocalConfig.kKind)
+        var filled: [String] = []
+        if let k = obj["key"], !k.isEmpty {
+            d.set(k, forKey: KBLocalConfig.kKey)
+            if let b = obj["base"], !b.isEmpty { d.set(b, forKey: KBLocalConfig.kBase) }
+            if let m = obj["model"], !m.isEmpty { d.set(m, forKey: KBLocalConfig.kModel) }
+            if let g = obj["kind"], let kind = APIKind(rawValue: g) {
+                d.set(kind.rawValue, forKey: KBLocalConfig.kKind)
+            }
+            filled.append(KBL("生成层", "generation"))
         }
-        if !judgeKey.isEmpty {
-            d.set(judgeKey, forKey: KBLocalConfig.kJudgeKey)
-            let base = (judgeBaseField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !base.isEmpty { d.set(base, forKey: KBLocalConfig.kJudgeBase) }
-            let model = (judgeModelField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !model.isEmpty { d.set(model, forKey: KBLocalConfig.kJudgeModel) }
+        if let k = obj["judgeKey"], !k.isEmpty {
+            d.set(k, forKey: KBLocalConfig.kJudgeKey)
+            if let b = obj["judgeBase"], !b.isEmpty { d.set(b, forKey: KBLocalConfig.kJudgeBase) }
+            if let m = obj["judgeModel"], !m.isEmpty { d.set(m, forKey: KBLocalConfig.kJudgeModel) }
+            filled.append(KBL("判断层", "judge"))
         }
-        var parts: [String] = []
-        if KBLocalConfig.hasLocal { parts.append(KBL("生成层", "generation")) }
-        if KBLocalConfig.hasLocalJudge { parts.append(KBL("判断层", "judge")) }
-        status.text = KBL("已保存 ✓ \(parts.joined(separator: " + ")) 下一次分析生效",
-                          "Saved ✓ \(parts.joined(separator: " + ")); takes effect on next analysis")
+        refreshStates()
+        status.text = filled.isEmpty
+            ? KBL("配置串里没有 Key", "No key inside the config string")
+            : KBL("已保存 \(filled.joined(separator: " + ")) ✓ 回到聊天点「分析」即可",
+                  "Saved \(filled.joined(separator: " + ")) ✓ go back and tap Analyze")
+    }
+
+    private func clearLocal() {
+        let d = KBLocalConfig.d
+        for k in [KBLocalConfig.kBase, KBLocalConfig.kKey, KBLocalConfig.kModel, KBLocalConfig.kKind,
+                  KBLocalConfig.kJudgeBase, KBLocalConfig.kJudgeKey, KBLocalConfig.kJudgeModel] {
+            d.removeObject(forKey: k)
+        }
+        refreshStates()
+        status.text = KBL("本地配置已清除", "Local config cleared")
     }
 }
