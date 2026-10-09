@@ -230,6 +230,8 @@ enum KBLocalConfig {
     static let kJudgeBase = "kb.local.judgeBase.v1"
     static let kJudgeKey = "kb.local.judgeKey.v1"
     static let kJudgeModel = "kb.local.judgeModel.v1"
+    /// 军师推演的本地覆盖。nil = 跟随共享配置里的开关。
+    static let kJunshi = "kb.local.junshi.v1"
 
     /// 键盘本地是否存了兜底的生成层 Key
     static var hasLocal: Bool {
@@ -240,6 +242,18 @@ enum KBLocalConfig {
     static var hasLocalJudge: Bool {
         !(d.string(forKey: kJudgeKey) ?? "").isEmpty
     }
+
+    /// 键盘本地的军师开关覆盖。没设过返回 nil（跟随共享配置）。
+    static var localJunshi: Bool? {
+        get { d.object(forKey: kJunshi) as? Bool }
+        set {
+            if let newValue { d.set(newValue, forKey: kJunshi) }
+            else { d.removeObject(forKey: kJunshi) }
+        }
+    }
+
+    /// 军师推演当前是否生效（本地覆盖优先，其次共享配置，都没有则默认开）。
+    static var junshiEffective: Bool { localJunshi ?? JevStore.loadConfig().junshi }
 
     /// 任意一层有本地兜底。管线门禁用这个放行 —— 共享容器断链时的唯一通路。
     static var hasAny: Bool { hasLocal || hasLocalJudge }
@@ -260,6 +274,9 @@ enum KBLocalConfig {
             cfg.judgeKey = k
             if let m = d.string(forKey: kJudgeModel), !m.isEmpty { cfg.judgeModel = m }
         }
+        // 军师开关是「偏好」不是「密钥」，本地设过就直接覆盖共享层——
+        // 免共享安装下 App 的开关传不过来，用户在键盘面板里的选择才算数。
+        if let j = localJunshi { cfg.junshiEnabled = j }
         return cfg
     }
 }

@@ -917,6 +917,8 @@ final class KBLocalKeyPanel: UIView {
 
     private let states = UILabel()
     private let status = UILabel()
+    /// 军师开关。在这块面板里也得能改——免共享安装下 App 的开关传不过来。
+    private let junshiBtn = UIButton(type: .system)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -969,7 +971,17 @@ final class KBLocalKeyPanel: UIView {
 
         states.font = .systemFont(ofSize: 12)
         states.numberOfLines = 0
-        refreshStates()
+
+        junshiBtn.setTitleColor(.white, for: .normal)
+        junshiBtn.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+        junshiBtn.titleLabel?.numberOfLines = 0
+        junshiBtn.backgroundColor = UIColor(red: 0.36, green: 0.30, blue: 0.68, alpha: 1)
+        junshiBtn.layer.cornerRadius = 9
+        junshiBtn.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        junshiBtn.addAction(UIAction { [weak self] _ in
+            KBLocalConfig.localJunshi = !KBLocalConfig.junshiEffective
+            self?.refreshStates()
+        }, for: .touchUpInside)
 
         let steps = label(
             KBL("第 1 步：打开 Jev App →「模型」页 → 点「复制配置串（给键盘）」。\n第 2 步：回这里点下面的粘贴。粘贴即保存，无需别的操作。",
@@ -990,12 +1002,13 @@ final class KBLocalKeyPanel: UIView {
             self?.clearLocal()
         }
 
-        let stack = UIStackView(arrangedSubviews: [top, states, steps, status, paste, clear])
+        let stack = UIStackView(arrangedSubviews: [top, states, junshiBtn, steps, status, paste, clear])
         stack.axis = .vertical
         stack.spacing = 9
         stack.frame = card.bounds.insetBy(dx: 14, dy: 12)
         stack.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         card.addSubview(stack)
+        refreshStates()   // 军师按钮已就位，统一刷一次文案与状态
     }
 
     private func refreshStates() {
@@ -1006,6 +1019,9 @@ final class KBLocalKeyPanel: UIView {
         states.textColor = KBLocalConfig.hasLocal
             ? UIColor(red: 0.5, green: 0.85, blue: 0.5, alpha: 1)
             : UIColor(red: 0.95, green: 0.75, blue: 0.4, alpha: 1)
+        junshiBtn.setTitle(KBLocalConfig.junshiEffective
+            ? KBL("🐶 军师推演：开（点这里关）", "🐶 Strategist: on (tap to turn off)")
+            : KBL("🐶 军师推演：关（点这里开）", "🐶 Strategist: off (tap to turn on)"), for: .normal)
     }
 
     /// 从 App 复制来的配置串里恢复配置，两层一起，粘贴即保存。
@@ -1042,6 +1058,10 @@ final class KBLocalKeyPanel: UIView {
             if let m = obj["judgeModel"], !m.isEmpty { d.set(m, forKey: KBLocalConfig.kJudgeModel) }
             filled.append(KBL("判断层", "judge"))
         }
+        // 军师开关也随配置串过来。JEV1 没有这个字段，读不到就保持现状（默认开）。
+        if let j = obj["junshi"] {
+            KBLocalConfig.localJunshi = (j == "1" || j.lowercased() == "true")
+        }
         refreshStates()
         status.text = filled.isEmpty
             ? KBL("配置串里没有 Key", "No key inside the config string")
@@ -1052,7 +1072,8 @@ final class KBLocalKeyPanel: UIView {
     private func clearLocal() {
         let d = KBLocalConfig.d
         for k in [KBLocalConfig.kBase, KBLocalConfig.kKey, KBLocalConfig.kModel, KBLocalConfig.kKind,
-                  KBLocalConfig.kJudgeBase, KBLocalConfig.kJudgeKey, KBLocalConfig.kJudgeModel] {
+                  KBLocalConfig.kJudgeBase, KBLocalConfig.kJudgeKey, KBLocalConfig.kJudgeModel,
+                  KBLocalConfig.kJunshi] {
             d.removeObject(forKey: k)
         }
         refreshStates()

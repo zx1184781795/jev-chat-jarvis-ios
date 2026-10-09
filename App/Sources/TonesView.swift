@@ -36,8 +36,8 @@ struct TonesView: View {
         } header: {
             Text(jevLocalized(store.language, zh: "生成方式", en: "Generation mode"))
         } footer: {
-            Text(jevLocalized(store.language, zh: "开启后链路：判断 → 军师推演（局面 / 利弊 / 首选 / 风险）→ 三档候选 → 排序。代价是多一次模型调用、多几秒。关掉则完全按下面的话术槽生成。",
-                              en: "On: judge → weigh (situation / trade-offs / advice / risks) → three-tier suggestions → rank. Costs one extra model call and a few seconds. Off: the tone slots below are used."))
+            Text(jevLocalized(store.language, zh: "开启后链路：判断 → 军师推演（局面 / 利弊 / 首选 / 风险）→ 三档候选 → 排序。代价是多一次模型调用、多几秒。关掉则完全按下面的话术槽生成。\n改完这里记得回「模型」页重新点一次「复制配置串（给键盘）」——免费账号下键盘读不到 App 的配置，这个开关也是靠配置串传过去的。",
+                              en: "On: judge → weigh (situation / trade-offs / advice / risks) → three-tier suggestions → rank. Costs one extra model call and a few seconds. Off: the tone slots below are used.\nAfter changing this, tap Copy config for keyboard again on the Models page — with a free Apple ID the keyboard cannot read the app's config, so this switch travels via the config string too."))
         }
     }
 

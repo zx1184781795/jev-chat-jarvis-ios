@@ -72,6 +72,7 @@ struct ProvidersView: View {
     /// 这一串就是给键盘的「人工共享容器」：复制 → 键盘面板「从 App 粘贴配置」。
     /// JEV2 同时装生成层和判断层（判断层同样受 App Group 限制，必须一起带过去）；
     /// 旧版键盘只认 JEV1，会忽略多余字段，不会因此报错。
+    /// junshi 一并带上：军师开关也走这条通路，否则免共享安装下键盘只能默认开着、关不掉。
     private var copyConfigButton: some View {
         Button {
             let payload: [String: String] = [
@@ -83,6 +84,7 @@ struct ProvidersView: View {
                 "judgeBase": store.config.judgeBase,
                 "judgeKey": store.config.judgeKey,
                 "judgeModel": store.config.judgeModel,
+                "junshi": store.config.junshi ? "1" : "0",
             ]
             if let data = try? JSONSerialization.data(withJSONObject: payload) {
                 UIPasteboard.general.string = "JEV2:" + data.base64EncodedString()
