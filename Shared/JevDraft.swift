@@ -48,39 +48,56 @@ final class JevDraft {
 
     // MARK: 起草
 
-    /// 一个话术一次调用，返回 2 条候选（前稳后放）。失败抛错，由管线层归拢。
+    /// 一轮起草。n = 这一轮要几条（话术槽模式是 2 条，军师三档模式是每档 1 条）。
+    /// strategyMode 换用三档模板——那个模板每次只写一条，跟「两条的胆量要有差别」的话术模板不是一回事。
+    /// 失败抛错，由管线层归拢。
     func draft(message: String, intent: String?, context: String?,
-               tone: String, instruction: String) async throws -> [String] {
+               tone: String, instruction: String,
+               n: Int = PER_TONE, strategyMode: Bool = false) async throws -> [String] {
         let prompt = buildDraftPrompt(message: message, intent: intent, context: context,
-                                      tone: tone, instruction: instruction, n: PER_TONE)
+                                      tone: tone, instruction: instruction, n: n,
+                                      strategyMode: strategyMode)
         let raw = try await call(prompt: prompt)
-        let lines = CandidateParser.parse(raw)
+        let lines = CandidateParser.parse(raw, limit: n)
         if lines.isEmpty { throw JevError.emptyReply }
         return lines
     }
 
+    /// 起草：单轮 user 提示，400 token 够两句候选。
     func call(prompt: String) async throws -> String {
+        try await complete(system: nil, user: prompt, maxTokens: 400,
+                           temperature: Self.temperature, budget: 35, stage: "生成")
+    }
+
+    /// 通用补全。军师推演复用同一套 transport——它要 system 提示、更长的输出和更宽的预算。
+    func complete(system: String?, user: String, maxTokens: Int,
+                  temperature: Double, budget: Double, stage: String) async throws -> String {
         let g = cfg.generation
         let url = Self.chatURL(g.base, kind: g.kind)
+        var messages: [[String: String]] = []
+        if let system { messages.append(["role": "system", "content": system]) }
+        messages.append(["role": "user", "content": user])
         var body: [String: Any]
         var headers = ["Content-Type": "application/json"]
         switch g.kind {
         case .openai:
             body = [
                 "model": g.model,
-                "messages": [["role": "user", "content": prompt]],
-                "max_tokens": 400,
-                "temperature": Self.temperature,
+                "messages": messages,
+                "max_tokens": maxTokens,
+                "temperature": temperature,
                 "stream": false,
             ]
             headers["Authorization"] = "Bearer \(g.key)"
         case .anthropic:
+            // Anthropic 的 messages 只收 user/assistant，system 是顶层字段
             body = [
                 "model": g.model,
-                "max_tokens": 400,
-                "temperature": Self.temperature,
-                "messages": [["role": "user", "content": prompt]],
+                "max_tokens": maxTokens,
+                "temperature": temperature,
+                "messages": messages,
             ]
+            if let system { body["system"] = system }
             headers["x-api-key"] = g.key
             headers["anthropic-version"] = "2023-06-01"
         }
@@ -91,7 +108,7 @@ final class JevDraft {
             for (k, v) in obj { body[k] = v }
         }
         let data = try await JevHTTP.postJSON(body, url: url, headers: headers,
-                                              budget: 35, stage: "生成")
+                                              budget: budget, stage: stage)
         return try Self.extractText(data, kind: g.kind, model: g.model)
     }
 

@@ -17,7 +17,8 @@ enum JevError: LocalizedError {
         // 界面语言决定错误文案；stage 名是管线内部的中文代号，展示前先翻译
         let en = JevStore.loadLanguage() == .english
         let stageText: (String) -> String = { stage in
-            en ? ["判断": "Judging", "排序": "Ranking", "起草": "Drafting"][stage] ?? stage : stage
+            en ? ["判断": "Judging", "排序": "Ranking", "起草": "Drafting", "生成": "Drafting",
+                  "军师": "Strategist"][stage] ?? stage : stage
         }
         switch self {
         case .config(let m): return en ? "Configuration issue: \(m)" : "配置问题：\(m)"

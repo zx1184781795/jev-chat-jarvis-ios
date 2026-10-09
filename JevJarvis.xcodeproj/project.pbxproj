@@ -19,12 +19,14 @@
 		75BF9371D4A495708E65AA91 /* JevPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59C6E67F4EECF593DCFDEF93 /* JevPipeline.swift */; };
 		8ECE4E2A0674C2FAA83FAB2D /* JevLocalization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 977D8EFF16830A434CB08DCD /* JevLocalization.swift */; };
 		96FFC7E9CFEDCDEA0BBDB029 /* JevModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC5E8120955C443F40DBBC94 /* JevModel.swift */; };
+		9E2D4B7A1C3586F0D4A2E931 /* JevJunshi.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F1A9C738B6E20D5A73C11B8 /* JevJunshi.swift */; };
 		A135CC6B64654766B5183A7C /* JevJudge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66DAB25961984A009B2F4762 /* JevJudge.swift */; };
 		A6CD614DDD9E46C6B8163F80 /* JevHTTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01311D68AC2C69F77E0DC7C7 /* JevHTTP.swift */; };
 		B22C0B857663E35E2987DE24 /* SetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D68F993A4A84C86E0CF1ECD /* SetupView.swift */; };
 		B91654FC5E8B2A61C519C46F /* KeyboardViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4706347BFCC4EE72CC451921 /* KeyboardViews.swift */; };
 		BBBE5FA11BC822A74CEC431E /* JevJarvisApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97932251F7F4348FE16751C5 /* JevJarvisApp.swift */; };
 		BBD83E88D595AAF9DE5D3909 /* PlaygroundView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D4FE8249C157D2DDBC979BE /* PlaygroundView.swift */; };
+		C58F3A0D7E149B62F8C4D207 /* JevJunshi.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F1A9C738B6E20D5A73C11B8 /* JevJunshi.swift */; };
 		CF0A96BCA766F517CAB28CDD /* JevPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59C6E67F4EECF593DCFDEF93 /* JevPipeline.swift */; };
 		CF3E23ACADEF845E5220996A /* KeyboardViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E845E71C6394DFDAAD38B7EA /* KeyboardViewController.swift */; };
 		D67E6C3EB4A3681763813A68 /* JevKeyboard.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B1D974B863D36BEC90B7AD48 /* JevKeyboard.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -71,6 +73,7 @@
 		3D4FE8249C157D2DDBC979BE /* PlaygroundView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaygroundView.swift; sourceTree = "<group>"; };
 		4650D3205CEFA69345CDCC12 /* JevJarvisUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = JevJarvisUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4706347BFCC4EE72CC451921 /* KeyboardViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardViews.swift; sourceTree = "<group>"; };
+		4F1A9C738B6E20D5A73C11B8 /* JevJunshi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JevJunshi.swift; sourceTree = "<group>"; };
 		58DAA46B238D923CABDE9A04 /* ProvidersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProvidersView.swift; sourceTree = "<group>"; };
 		59C6E67F4EECF593DCFDEF93 /* JevPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JevPipeline.swift; sourceTree = "<group>"; };
 		627FA625E25DD31F5B0A9ED4 /* ScreenshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotTests.swift; sourceTree = "<group>"; };
@@ -146,6 +149,7 @@
 				E468153E66BE1ACAABC3DDC3 /* JevDraft.swift */,
 				01311D68AC2C69F77E0DC7C7 /* JevHTTP.swift */,
 				66DAB25961984A009B2F4762 /* JevJudge.swift */,
+				4F1A9C738B6E20D5A73C11B8 /* JevJunshi.swift */,
 				977D8EFF16830A434CB08DCD /* JevLocalization.swift */,
 				FC5E8120955C443F40DBBC94 /* JevModel.swift */,
 				59C6E67F4EECF593DCFDEF93 /* JevPipeline.swift */,
@@ -293,6 +297,7 @@
 				5C820E4132398F7BC039CC92 /* JevDraft.swift in Sources */,
 				A6CD614DDD9E46C6B8163F80 /* JevHTTP.swift in Sources */,
 				E4BE80B596BE426D51ABA6AB /* JevJudge.swift in Sources */,
+				9E2D4B7A1C3586F0D4A2E931 /* JevJunshi.swift in Sources */,
 				8ECE4E2A0674C2FAA83FAB2D /* JevLocalization.swift in Sources */,
 				96FFC7E9CFEDCDEA0BBDB029 /* JevModel.swift in Sources */,
 				CF0A96BCA766F517CAB28CDD /* JevPipeline.swift in Sources */,
@@ -319,6 +324,7 @@
 				F75AF192F6299A272F3298BD /* JevHTTP.swift in Sources */,
 				BBBE5FA11BC822A74CEC431E /* JevJarvisApp.swift in Sources */,
 				A135CC6B64654766B5183A7C /* JevJudge.swift in Sources */,
+				C58F3A0D7E149B62F8C4D207 /* JevJunshi.swift in Sources */,
 				D77B55498DD654E12E46D920 /* JevLocalization.swift in Sources */,
 				6CDFA8F322ED6E2C5A2C458F /* JevModel.swift in Sources */,
 				75BF9371D4A495708E65AA91 /* JevPipeline.swift in Sources */,

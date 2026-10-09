@@ -64,6 +64,8 @@ func localizedToneName(_ name: String, language: JevLanguage) -> String {
         "卑微乙方": "Humble vendor", "稳如老狗": "Calm engineer", "已读乱回": "Minimal reply",
         "鱼塘主": "The charmer", "职场黑话": "Corporate jargon", "阴阳怪气": "Sarcastic",
         "情绪价值": "Emotional support", "夸夸": "Hype friend", "讨好型人格": "People pleaser",
+        // 军师三档（出现在候选徽章与推演面板上）
+        "稳健": "Steady", "会撩": "Playful", "强势": "Bold",
         NONE_LABEL: "Off",
     ][name] ?? name
 }

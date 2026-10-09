@@ -48,10 +48,26 @@
 
 1. 长按对方那条消息 → **复制**
 2. 输入框获得焦点，键盘切到 Jev（地球键切换）→ 点 **「分析剪贴板」**
-3. 键盘上显示：意图 + 风险 0-9 + 行动建议 + 每话术 2 条候选（前稳后放）
+3. 键盘上显示：意图 + 风险 0-9 + 行动建议 + **军师推演**（首选与风险常显，点一下展开局面/利弊/三档口径）+ 三档候选（稳健 / 会撩 / 强势，各 1 条）
 4. 点中意的候选 → 文字直接进入当前输入框 → **发送由你手动完成**（本项目永不自动发送）
 
 另有「分析输入框文字」按钮：分析你打到一半拿不准的话（读 `documentContextBeforeInput`）。
+
+### 狗头军师推演
+
+链路里的一个可选环节（App →「话术」页 → 生成方式，**默认开**）：
+
+```
+Jev 判断（风险 + 意图）─┐
+                        ├─ 并行起跑
+军师推演（局面/利弊/首选/风险）─┘ → 按三档口径各起草 1 条 → Jev 排序
+```
+
+- 军师走的是**生成层**那把 key（跟起草同一家服务），不吃 Jev 的判断协议；
+- 三档口径由军师按当前对话现场拟定：**稳健**（兜底）／**会撩**（气氛好时用）／**强势**（推进或快速筛选），每档都带「适合什么时候发」和「主要代价」；
+- 军师推演失败或超时（25 秒）会自动退回按话术槽起草，行为与本功能引入前完全一致；
+- 多花一次模型调用、约几秒。想回到话术槽模式，把这个开关关掉即可。
+
 
 ## 配置
 
@@ -88,8 +104,9 @@ swiftc -o /tmp/jevcheck tools/PromptCheck/main.swift Shared/*.swift && /tmp/jevc
 │   ├── JevPrompts.swift   # 意图/风险/话术/prompt/清洗
 │   ├── JevHTTP.swift      # 带总预算的 POST（429/5xx 退避重试）
 │   ├── JevJudge.swift     # TypeSafe systemone：判断 + 排序
-│   ├── JevDraft.swift     # OpenAI/Anthropic 起草
-│   └── JevPipeline.swift  # 判断 → 每话术并发起草 → 排序
+│   ├── JevJunshi.swift    # 狗头军师：利弊推演 + 稳健/会撩/强势三档口径
+│   ├── JevDraft.swift     # OpenAI/Anthropic 起草（含三档模板）
+│   └── JevPipeline.swift  # 判断 ∥ 军师推演 → 起草 → 排序
 ├── App/Sources/           # SwiftUI：开始（键盘状态）/ 模型 / 话术 / 试一试
 ├── App/Assets.xcassets/   # AppIcon（改设计见 tools/MakeAppIcon，别手改 PNG）
 ├── Keyboard/Sources/      # UIKit 键盘扩展（内存 <60MB 约束下的纯系统控件）

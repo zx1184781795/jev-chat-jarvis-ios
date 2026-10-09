@@ -25,6 +25,8 @@ final class KeyboardViewController: UIInputViewController {
     private var analysis: Analysis?
     private var errorText: String = ""
     private var stageLabel = UILabel()
+    /// 军师推演面板展开状态。默认收起：键盘面板寸土寸金，只露「首选 + 风险」这两行最该看的。
+    private var junshiExpanded = false
 
     private enum Source { case clipboard, inputField }
 
@@ -379,11 +381,17 @@ final class KeyboardViewController: UIInputViewController {
         btnRow.heightAnchor.constraint(equalToConstant: 44).isActive = true
 
         // 话术：点进去直接在键盘上选（写回共享配置，App 的「话术」页看到的是同一份）
-        let tonesBtn = KB.button(
-            cfg.activeSlots.isEmpty
-                ? L("话术：都没选（点这里选）", "Tones: none selected")
-                : L("话术：", "Tones: ") + cfg.activeSlots.map { localizedToneName($0, language: language) }.joined(separator: " · "),
-            icon: "theatermasks")
+        // 军师推演开着时候选由它定三档口径，这里就如实显示「军师三档」，不再装作是话术槽在起作用
+        let anglesText: String
+        if cfg.junshi {
+            anglesText = L("口径：军师三档（稳健 · 会撩 · 强势）", "Angles: Strategist tiers (Steady · Playful · Bold)")
+        } else if cfg.activeSlots.isEmpty {
+            anglesText = L("话术：都没选（点这里选）", "Tones: none selected")
+        } else {
+            anglesText = L("话术：", "Tones: ")
+                + cfg.activeSlots.map { localizedToneName($0, language: language) }.joined(separator: " · ")
+        }
+        let tonesBtn = KB.button(anglesText, icon: "theatermasks")
         tonesBtn.heightAnchor.constraint(equalToConstant: 34).isActive = true
         tonesBtn.addTarget(self, action: #selector(openTonePicker), for: .touchUpInside)
 
@@ -433,6 +441,14 @@ final class KeyboardViewController: UIInputViewController {
         let title = KB.label(L("选话术（最多 \(MAX_SLOTS) 个 · 每个每次出 2 条）", "Choose tones (up to \(MAX_SLOTS) · 2 suggestions each)"),
                              font: .systemFont(ofSize: 12), color: KB.secondaryText, lines: 0)
         var blocks: [UIView] = [title]
+
+        // 军师开着时槽位不参与生成，得说清楚，否则用户点了半天没变化会以为是坏的
+        if cfg.junshi {
+            blocks.append(KB.label(
+                L("已开启军师推演：候选按稳健 / 会撩 / 强势三档生成（每档 1 条），下面的槽位暂不生效。想用槽位请到 App「话术」页关掉军师。",
+                  "Strategist weighing is on: suggestions follow the three tiers (1 each). The slots below stay inactive until you turn it off in the app's Tones tab."),
+                font: .systemFont(ofSize: 11), color: KB.secondaryText, lines: 0))
+        }
 
         // 每行 3 个等宽格子：话术名长短不一，等宽比按内容排更好点、也更整齐
         var row: [UIButton] = []
@@ -565,11 +581,27 @@ final class KeyboardViewController: UIInputViewController {
         ])
         outer.addArrangedSubview(header)
 
+        // 军师推演面板：默认只露「首选 + 风险」，点一下展开局面/利弊/三档口径。
+        // 放在判断头下面、候选上面——推演的顺序本来就是「先看清局面，再从选项里挑」。
+        var junshiBlock: UIView?
+        if let js = a.junshi {
+            let card = junshiCard(js)
+            junshiBlock = card
+            outer.addArrangedSubview(card)
+            card.setContentHuggingPriority(.required, for: .vertical)
+        }
+
         // 时间脚注（先建好：插入/发送的反馈要临时改它）
-        let footer = KB.label(a.rankingPending
-                                ? L("候选已出 · 排序中…（现在就能点）", "Suggestions ready · ranking… (you can tap now)")
-                                : L(String(format: "%.1f 秒 · 点候选插入，点「发送」发出", a.elapsed), String(format: "%.1f s · tap a suggestion to insert, then Send", a.elapsed)),
-                              font: .systemFont(ofSize: 10), color: KB.secondaryText)
+        let footerText: String
+        if a.rankingPending {
+            footerText = a.candidates.isEmpty
+                ? L("推演完成 · 起草中…", "Weighed · drafting…")
+                : L("候选已出 · 排序中…（现在就能点）", "Suggestions ready · ranking… (you can tap now)")
+        } else {
+            footerText = L(String(format: "%.1f 秒 · 点候选插入，点「发送」发出", a.elapsed),
+                           String(format: "%.1f s · tap a suggestion to insert, then Send", a.elapsed))
+        }
+        let footer = KB.label(footerText, font: .systemFont(ofSize: 10), color: KB.secondaryText)
         flashTarget = footer
 
         // 候选列表（可滚动）。真没有候选时也要说一句话，别留给用户一片空白。
@@ -577,8 +609,11 @@ final class KeyboardViewController: UIInputViewController {
         list.axis = .vertical
         list.spacing = 6
         if a.candidates.isEmpty {
-            list.addArrangedSubview(KB.label(L("这次没出候选，点「换一批」再试一次", "No suggestions this time. Tap Regenerate to try again."),
-                                             font: .systemFont(ofSize: 13),
+            // 军师刚回来、候选还在路上——别报「没出候选」，那是误伤
+            let emptyText = a.rankingPending
+                ? L("军师推演完成，正在起草候选…", "Weighing done, drafting suggestions…")
+                : L("这次没出候选，点「换一批」再试一次", "No suggestions this time. Tap Regenerate to try again.")
+            list.addArrangedSubview(KB.label(emptyText, font: .systemFont(ofSize: 13),
                                              color: KB.secondaryText, lines: 0))
         }
         for c in a.candidates {
@@ -636,8 +671,75 @@ final class KeyboardViewController: UIInputViewController {
         footer.setContentHuggingPriority(.required, for: .vertical)
         scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
         scroll.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-        fitBlocks = [header, list, actions, footer]
+        fitBlocks = [header] + (junshiBlock.map { [$0] } ?? []) + [list, actions, footer]
         return outer
+    }
+
+    // MARK: 军师推演面板
+
+    /// 推演卡：收起时只留「首选 + 风险」，展开后补上局面、利弊与三档口径。
+    /// 首选一定露出——那是最该看的一句话，用户不该为了看它还得先展开。
+    private func junshiCard(_ js: JunshiAnalysis) -> UIView {
+        let card = KB.cardView()
+        var items: [UIView] = []
+
+        let chip = KB.badge(L("军师推演", "Strategist"), color: KB.brand)
+        chip.font = .systemFont(ofSize: 11, weight: .medium)
+        let arrow = KB.label(junshiExpanded ? "▾" : "▸", font: .systemFont(ofSize: 12, weight: .semibold),
+                             color: KB.secondaryText)
+        arrow.setContentHuggingPriority(.required, for: .horizontal)
+        let head = UIStackView(arrangedSubviews: [chip, arrow, UIView()])
+        head.axis = .horizontal
+        head.spacing = 6
+        head.alignment = .center
+        items.append(head)
+
+        if !js.advice.isEmpty {
+            items.append(KB.label("★ " + js.advice, font: .systemFont(ofSize: 13, weight: .semibold),
+                                  color: KB.brand, lines: 2))
+        }
+        if !js.risks.isEmpty {
+            items.append(KB.label(L("风险：", "Risks: ") + js.risks.joined(separator: "；"),
+                                  font: .systemFont(ofSize: 11), color: .systemOrange, lines: 0))
+        }
+        if junshiExpanded {
+            if !js.read.isEmpty {
+                items.append(KB.label(L("局面：", "Situation: ") + js.read,
+                                      font: .systemFont(ofSize: 11), color: KB.secondaryText, lines: 0))
+            }
+            if !js.interests.isEmpty {
+                items.append(KB.label(L("利弊：", "Trade-offs: ") + js.interests,
+                                      font: .systemFont(ofSize: 11), color: KB.secondaryText, lines: 0))
+            }
+            for v in js.versions {
+                var line = localizedToneName(v.strategy, language: language) + " · " + v.aim
+                if !v.whenText.isEmpty {
+                    line += language == .english ? " (when: \(v.whenText))" : "（适合：\(v.whenText)）"
+                }
+                items.append(KB.label(line, font: .systemFont(ofSize: 11), color: KB.secondaryText, lines: 0))
+            }
+        }
+
+        let vstack = UIStackView(arrangedSubviews: items)
+        vstack.axis = .vertical
+        vstack.spacing = 4
+        vstack.isLayoutMarginsRelativeArrangement = true
+        vstack.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8)
+        card.addSubview(vstack)
+        vstack.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            vstack.topAnchor.constraint(equalTo: card.topAnchor),
+            vstack.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            vstack.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            vstack.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+        ])
+        card.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(toggleJunshi)))
+        return card
+    }
+
+    @objc private func toggleJunshi() {
+        junshiExpanded.toggle()
+        render()
     }
 
     /// 即时反馈：目标那行小字短暂变色改字。用户要一眼能确认「点到了 / 插进去了 / 发出去了」。
@@ -757,6 +859,7 @@ final class KeyboardViewController: UIInputViewController {
                     Task { @MainActor in
                         switch stage {
                         case .judging: self?.stageLabel.text = self?.L("判断中…", "Judging…")
+                        case .weighing: self?.stageLabel.text = self?.L("军师推演中…", "Weighing the situation…")
                         case .drafting(let done, let total):
                             self?.stageLabel.text = self?.L("生成中 \(done)/\(total)…", "Drafting \(done)/\(total)…")
                         case .ranking: self?.stageLabel.text = self?.L("排序中…", "Ranking…")

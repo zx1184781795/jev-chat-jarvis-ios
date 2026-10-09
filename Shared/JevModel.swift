@@ -103,6 +103,15 @@ struct JevConfig: Codable, Equatable {
     /// 用户自定义话术（名字 = 说明），同名覆盖内置。
     var customTones: [String: String] = [:]
 
+    /// 狗头军师推演开关。**必须是可选**：Swift 合成的解码器遇到「键不存在」会直接抛错，
+    /// 而不是用默认值——写成非可选会让老配置解不开，loadConfig 静默退回默认值把 key 全清掉。
+    /// nil（老配置）按「开」处理。
+    var junshiEnabled: Bool?
+
+    /// 军师推演是否生效：判断 → 军师推演（局面/利弊/首选/风险）→ 稳健/会撩/强势三档候选 → 排序。
+    /// 关掉则按下面的话术槽生成，行为与本功能引入前完全一致。
+    var junshi: Bool { junshiEnabled ?? true }
+
     var activeSlots: [String] { Array(slots.filter { !$0.isEmpty }.prefix(MAX_SLOTS)) }
 
     /// 生成层凭据完全来自用户配置，不会回退到项目提供的服务。

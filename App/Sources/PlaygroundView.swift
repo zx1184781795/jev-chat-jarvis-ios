@@ -50,6 +50,7 @@ struct PlaygroundView: View {
                 Task { @MainActor in
                     switch s {
                     case .judging: stage = jevLocalized(language, zh: "判断中…", en: "Judging…")
+                    case .weighing: stage = jevLocalized(language, zh: "军师推演中…", en: "Weighing…")
                     case .drafting(let d, let t): stage = jevLocalized(language, zh: "生成中 \(d)/\(t)…", en: "Drafting \(d)/\(t)…")
                     case .ranking: stage = jevLocalized(language, zh: "排序中…", en: "Ranking…")
                     case .done: stage = jevLocalized(language, zh: "完成", en: "Done")
@@ -96,6 +97,10 @@ struct AnalysisResultView: View {
                 .padding(.vertical, 4)
             }
 
+            if let js = analysis.junshi {
+                JunshiPanelView(junshi: js)
+            }
+
             ForEach(analysis.candidates) { c in
                 HStack(alignment: .top) {
                     Text(localizedToneName(c.tone, language: store.language))
@@ -138,5 +143,62 @@ struct AnalysisResultView: View {
         case ..<8: return .orange
         default: return .red
         }
+    }
+}
+
+/// 军师推演面板（App 端）。键盘那侧是同一份数据的精简版。
+struct JunshiPanelView: View {
+    @EnvironmentObject private var store: ConfigStore
+    let junshi: JunshiAnalysis
+    @State private var expanded = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(jevLocalized(store.language, zh: "军师推演", en: "Strategist"))
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Color.accentColor.opacity(0.15), in: Capsule())
+                Spacer()
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+                } label: {
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.caption2)
+                }
+                .buttonStyle(.borderless)
+            }
+            if !junshi.advice.isEmpty {
+                Text("★ " + junshi.advice)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.tint)
+            }
+            if !junshi.risks.isEmpty {
+                Text(jevLocalized(store.language, zh: "风险：", en: "Risks: ") + junshi.risks.joined(separator: "；"))
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            if expanded {
+                if !junshi.read.isEmpty {
+                    Text(jevLocalized(store.language, zh: "局面：", en: "Situation: ") + junshi.read)
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if !junshi.interests.isEmpty {
+                    Text(jevLocalized(store.language, zh: "利弊：", en: "Trade-offs: ") + junshi.interests)
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                ForEach(junshi.versions, id: \.strategy) { v in
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(localizedToneName(v.strategy, language: store.language) + " · " + v.aim)
+                            .font(.caption).foregroundStyle(.secondary)
+                        if !v.whenText.isEmpty || !v.cost.isEmpty {
+                            Text([v.whenText.isEmpty ? nil : jevLocalized(store.language, zh: "适合：\(v.whenText)", en: "when: \(v.whenText)"),
+                                  v.cost.isEmpty ? nil : jevLocalized(store.language, zh: "代价：\(v.cost)", en: "cost: \(v.cost)")]
+                                    .compactMap { $0 }.joined(separator: " · "))
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 4)
     }
 }

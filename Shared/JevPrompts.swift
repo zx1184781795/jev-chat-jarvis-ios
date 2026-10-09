@@ -138,9 +138,42 @@ Hard requirements:
 - Do not write the tone name (do not add a prefix such as “{tone}:”); start with the reply itself
 """
 
+/// 军师三档专用模板：每次只写 1 条，口径由军师推演给定。
+/// 不能复用 PROMPT_ONE——那个模板里写死了「两条的胆量要有差别」，n=1 时自相矛盾。
+let PROMPT_STRATEGY = """
+刚收到一条聊天消息，你要帮我回。
+
+{context_line}消息：「{message}」
+{intent_line}
+请写 1 条回复，口径就是下面这一档：
+「{tone}」{instruction}
+
+硬性要求：
+- 这条必须落在这个档位上，同时像日常聊天打字：不要客套话、不要解释、不要写小作文
+- 不超过 30 个字
+- 只输出 1 行，不要编号、不要引号、不要任何前后缀
+- 不要写出档位名称（不要写「{tone}：」这类前缀），直接从回复内容开始
+"""
+
+let PROMPT_STRATEGY_EN = """
+You just received a chat message and need to reply.
+
+{context_line}Message: “{message}”
+{intent_line}
+Write exactly 1 reply for the angle below:
+“{tone}” {instruction}
+
+Hard requirements:
+- Write the reply in English, regardless of the language of the message
+- It must land on that angle, and read like everyday typing: no formal filler, no explanations, no paragraphs
+- Keep it under 30 words
+- Output only 1 line, with no numbering, quotes, or prefixes
+- Do not write the angle name (do not add a prefix such as “{tone}:”); start with the reply itself
+"""
+
 func buildDraftPrompt(message: String, intent: String?, context: String?,
                       tone: String, instruction: String, n: Int,
-                      language: JevLanguage? = nil) -> String {
+                      language: JevLanguage? = nil, strategyMode: Bool = false) -> String {
     let selectedLanguage = language ?? JevStore.loadLanguage()
     let contextLine: String
     let intentLine: String
@@ -151,8 +184,14 @@ func buildDraftPrompt(message: String, intent: String?, context: String?,
         contextLine = context != nil && !(context ?? "").isEmpty ? "最近的对话：\n\(context!)\n\n" : ""
         intentLine = intent != nil && !(intent ?? "").isEmpty ? "判断出的意图：\(intent!)\n" : ""
     }
-    let template = selectedLanguage == .english ? PROMPT_ONE_EN : PROMPT_ONE
-    let promptInstruction = selectedLanguage == .english && BUILTIN_TONES[tone] == instruction
+    let template: String
+    if strategyMode {
+        template = selectedLanguage == .english ? PROMPT_STRATEGY_EN : PROMPT_STRATEGY
+    } else {
+        template = selectedLanguage == .english ? PROMPT_ONE_EN : PROMPT_ONE
+    }
+    // 三档模式下 instruction 是军师现场给的，不能走内置话术的英文改写表
+    let promptInstruction = !strategyMode && selectedLanguage == .english && BUILTIN_TONES[tone] == instruction
         ? toneEnglishDescription(tone) : instruction
     return template
         .replacingOccurrences(of: "{context_line}", with: contextLine)

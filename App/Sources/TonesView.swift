@@ -8,12 +8,36 @@ struct TonesView: View {
     var body: some View {
         NavigationStack {
             List {
+                junshiSection
                 slotsSection
                 customSection
                 previewSection
             }
             .navigationTitle(jevLocalized(store.language, zh: "话术", en: "Tones"))
             .sheet(isPresented: $showAdd) { AddToneView() }
+        }
+    }
+
+    /// 狗头军师推演开关。开了以后生成由一个「先推演利弊、再定三档口径」的环节接管，
+    /// 下面的话术槽就不参与生成了（配置仍保留，关掉即恢复）。
+    private var junshiSection: some View {
+        Section {
+            Toggle(isOn: Binding(
+                get: { store.config.junshi },
+                set: { store.config.junshiEnabled = $0 }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(jevLocalized(store.language, zh: "狗头军师推演", en: "Strategist weighing"))
+                    Text(jevLocalized(store.language, zh: "先推演局面与利弊，再按「稳健 / 会撩 / 强势」三档出候选",
+                                      en: "Weigh the situation first, then draft in three tiers (Steady / Playful / Bold)"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Text(jevLocalized(store.language, zh: "生成方式", en: "Generation mode"))
+        } footer: {
+            Text(jevLocalized(store.language, zh: "开启后链路：判断 → 军师推演（局面 / 利弊 / 首选 / 风险）→ 三档候选 → 排序。代价是多一次模型调用、多几秒。关掉则完全按下面的话术槽生成。",
+                              en: "On: judge → weigh (situation / trade-offs / advice / risks) → three-tier suggestions → rank. Costs one extra model call and a few seconds. Off: the tone slots below are used."))
         }
     }
 

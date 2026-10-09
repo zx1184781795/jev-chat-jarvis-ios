@@ -1,14 +1,16 @@
 import Foundation
 
-// MARK: - 端到端管线：判断 → 起草（每话术并发）→ 排序
+// MARK: - 端到端管线：判断 → 军师推演 → 起草（每档 1 条 / 每话术 2 条）→ 排序
 //
-// 阶段间是「带截止时间的串行」：判断通常 ~1 秒，等它出来再把意图喂给起草，
-// 候选质量明显更好；判断超时或没配 key 时直接盲起草（Windows 版同款回退）。
-// 排序失败按「每个话术的第 1 条（稳妥款）在前」的默认顺序展示。
+// 阶段间的关系：**判断与军师推演同时起跑**（两者互不依赖，串起来就是白等一次往返），
+// 起草等军师——军师要定三档口径，候选才有个谱。
+// 两级回退都在：判断超时/没配 key → 盲起草（意图只影响排序与军师）；军师挂了 → 退回按话术槽起草，
+// 行为与本功能引入前完全一致。排序失败按「每个档位的第 1 条在前」的默认顺序展示。
 
 struct Candidate: Identifiable, Equatable {
     var id: String { text }
     var text: String
+    /// 话术名，或军师三档模式下是档位名（稳健/会撩/强势）
     var tone: String
     /// Jev 排序概率；没排序时为 nil
     var prob: Double?
@@ -17,6 +19,8 @@ struct Candidate: Identifiable, Equatable {
 struct Analysis: Equatable {
     var message: String
     var judge: JudgeResult?
+    /// 狗头军师推演结果（没开、或推演失败退回时为 nil）
+    var junshi: JunshiAnalysis?
     var candidates: [Candidate] = []
     /// 非致命错误（某话术失败、排序失败），界面黄条展示
     var notices: [String] = []
@@ -29,6 +33,8 @@ struct Analysis: Equatable {
 
 enum PipelineStage: Equatable {
     case judging
+    /// 军师推演（局面 / 利弊 / 首选 / 风险 + 三档口径）
+    case weighing
     case drafting(done: Int, total: Int)
     case ranking
     case done
@@ -38,11 +44,15 @@ final class JevPipeline {
     private let cfg: JevConfig
     private let judge: JevJudge
     private let draft: JevDraft
+    private let junshi: JevJunshi
+    private let language: JevLanguage
 
     init(cfg: JevConfig) {
         self.cfg = cfg
         self.judge = JevJudge(cfg: cfg)
         self.draft = JevDraft(cfg: cfg)
+        self.junshi = JevJunshi(cfg: cfg)
+        self.language = JevStore.loadLanguage()
     }
 
     var generationConfigured: Bool { draft.isConfigured }
@@ -52,7 +62,8 @@ final class JevPipeline {
     /// 时间预算上的取舍（实测：模型服务每次请求光"出第一个字"就要 1.5 秒上下，
     /// 而且两条并发请求是真并发、不被排队），所以**减少串行等待**比压缩单次耗时更有效：
     ///   · 判断结果按消息缓存：同一条消息再分析（主要是「换一批」）不再花那次往返；
-    ///   · 每条话术的候选一到就通过 onPartial 交给界面，不等其余话术、更不等排序。
+    ///   · 判断与军师并行起跑，不串成两段等待；
+    ///   · 每条档位的候选一到就通过 onPartial 交给界面，不等其余档位、更不等排序。
     func analyze(message: String, context: String?,
                  onStage: ((PipelineStage) -> Void)? = nil,
                  onPartial: ((Analysis) -> Void)? = nil) async -> Analysis {
@@ -84,9 +95,8 @@ final class JevPipeline {
         // 1) 判断层：起跑，但**不阻塞起草**。
         //
         // 为什么不串行等它：实测每次请求光"出第一个字"就要 1.5 秒上下，而喂给起草模型的那句
-        // "意图"只是一个标签（真正决定候选风格的是话术指令）——A/B 实测盲起草与带意图起草的
-        // 候选几乎没差别。所以让判断与起草重叠，意图的作用由「排序」这一层体现（它本来就用意图
-        // 决定名次）；万一判断给出的是高风险消息，再用意图重写一版候选替换（见下面的 refine）。
+        // "意图"只是一个标签（真正决定候选风格的是档位/话术指令）——A/B 实测盲起草与带意图起草的
+        // 候选几乎没差别。所以让判断与起草重叠，意图的作用由「排序」这一层体现。
         //
         // 同一条消息的判断结果带缓存：换一批时连这一次都不用跑。
         var judgeResult = judge.isConfigured
@@ -102,11 +112,46 @@ final class JevPipeline {
             }
         }
 
-        // 2) 起草：一个话术一次请求，并发；不等判断、也不等齐——每完成一个就先交给界面
+        // 1b) 军师推演：与判断并行起跑。它决定三档口径，所以起草要等它——
+        // 但有硬超时（25 秒）兜着，不会把键盘一直吊在那儿。
+        var junshiResult: JunshiAnalysis?
+        if cfg.junshi, junshi.isConfigured {
+            onStage?(.weighing)
+            do {
+                junshiResult = try await withTimeout(seconds: 25) {
+                    try await self.junshi.weigh(message: msg, context: context)
+                }
+            } catch {
+                junshiResult = nil
+                out.notices.append(language == .english
+                    ? "Strategist weigh-in failed; drafting from your tone slots instead"
+                    : "军师推演没成功，已按话术槽起草")
+            }
+        }
+        out.junshi = junshiResult
+        // 推演是主菜，先把它落上面板，别等候选齐了才一起出现
+        if junshiResult != nil {
+            var p = out
+            p.rankingPending = true
+            p.elapsed = Date().timeIntervalSince(start)
+            onPartial?(p)
+        }
+
+        // 2) 起草：军师在 → 稳健/会撩/强势三档，每档 1 条；
+        //           否则 → 用户选的话术槽，每槽 2 条（一个槽一次请求，并发）。
         let tones = allTones(custom: cfg.customTones)
-        let active = cfg.activeSlots.compactMap { name -> (String, String)? in
-            guard let instruction = tones[name] else { return nil }
-            return (name, instruction)
+        var active: [(String, String)]
+        var perTone = PER_TONE
+        var strategyMode = false
+        if let js = junshiResult, !js.versions.isEmpty {
+            strategyMode = true
+            perTone = 1
+            active = js.versions.map { ($0.strategy, junshiInstruction($0, language: language)) }
+        } else {
+            active = cfg.activeSlots.compactMap { name -> (String, String)? in
+                guard let instruction = tones[name] else { return nil }
+                return (name, instruction)
+            }
         }
         guard !active.isEmpty else {
             out.fatalError = JevStore.loadLanguage() == .english
@@ -130,6 +175,7 @@ final class JevPipeline {
 
         onStage?(.drafting(done: 0, total: active.count))
         var round = await draftRound(active: active, msg: msg, intent: firstIntent, context: context,
+                                     perTone: perTone, strategyMode: strategyMode,
                                      onStage: onStage) { r in
             onPartial?(partial(with: r, judge: JevJudgeCache.shared.get(message: msg, context: context)))
         }
@@ -147,10 +193,13 @@ final class JevPipeline {
                 : "判断层没响应，已盲起草（不影响出候选）。点「🔑 在键盘里填 API Key」可以把判断层的 Key 一起补上。")
         }
 
-        // 2b) 高风险消息才用意图重写一版：盲起草在平常用消息上够用，风险高的才值得多花一次往返。
-        if let jr = judgeResult, firstIntent == nil, jr.risk >= Self.refineRiskThreshold, !drafted.isEmpty {
+        // 2b) 高风险消息才用意图重写一版。**只在军师没接管时做**：军师那套三档口径本身就是
+        // 按"这一步的利弊"定的，风险高的情况下它已经给了更贴的答案，再花一次往返不划算。
+        if junshiResult == nil, let jr = judgeResult, firstIntent == nil,
+           jr.risk >= Self.refineRiskThreshold, !drafted.isEmpty {
             let note = String(format: "风险 %.0f/9：已按判断重写一版候选", jr.risk)
             round = await draftRound(active: active, msg: msg, intent: jr.intent, context: context,
+                                     perTone: perTone, strategyMode: strategyMode,
                                      onStage: onStage) { r in
                 onPartial?(partial(with: r, judge: jr, extraNotices: [note]))
             }
@@ -169,7 +218,7 @@ final class JevPipeline {
             return out
         }
 
-        // 3) 排序（可选）。失败按默认顺序：同话术的稳妥款在前。
+        // 3) 排序（可选）。失败按默认顺序：同档位的稳妥款在前。
         let ordered = Self.ordered(active.map(\.0), drafted)
         if judge.isConfigured, let jr = judgeResult {
             onStage?(.ranking)
@@ -177,7 +226,7 @@ final class JevPipeline {
                 try await self.judge.rank(message: msg, intent: jr.intent,
                                           candidates: ordered.map(\.text))
             }) {
-                // 同一句话可能被两个话术各出一条（去重前不能拿它当字典的唯一 key，会 trap）。
+                // 同一句话可能被两个档位各出一条（去重前不能拿它当字典的唯一 key，会 trap）。
                 let toneBy = Dictionary(ordered.map { ($0.text, $0.tone) },
                                         uniquingKeysWith: { first, _ in first })
                 let mapped = ranked.compactMap { r -> Candidate? in
@@ -209,7 +258,7 @@ final class JevPipeline {
         return out
     }
 
-    /// 按话术槽的顺序整理候选（每个槽内部保持模型给出的顺序：前稳后放）
+    /// 按档位/话术槽的顺序整理候选（每个槽内部保持模型给出的顺序：前稳后放）
     private static func ordered(_ tones: [String], _ drafted: [Candidate]) -> [Candidate] {
         tones.flatMap { name in drafted.filter { $0.tone == name } }
     }
@@ -224,8 +273,9 @@ final class JevPipeline {
         var notices: [String] = []
     }
 
-    /// 跑一轮起草：每个话术一次请求（并发），每完成一个就把"到目前为止的候选"交给界面。
+    /// 跑一轮起草：每个档位/话术一次请求（并发），每完成一个就把"到目前为止的候选"交给界面。
     private func draftRound(active: [(String, String)], msg: String, intent: String?, context: String?,
+                            perTone: Int, strategyMode: Bool,
                             onStage: ((PipelineStage) -> Void)?,
                             onPartial: @escaping (DraftRound) -> Void) async -> DraftRound {
         var round = DraftRound()
@@ -235,7 +285,8 @@ final class JevPipeline {
                     do {
                         let texts = try await self.draft.draft(
                             message: msg, intent: intent, context: context,
-                            tone: name, instruction: instruction)
+                            tone: name, instruction: instruction,
+                            n: perTone, strategyMode: strategyMode)
                         return (name, texts, nil)
                     } catch {
                         return (name, [], error.localizedDescription)
@@ -252,7 +303,7 @@ final class JevPipeline {
                         : "「\(name)」失败：\(err)")
                 }
                 for t in texts { round.candidates.append(Candidate(text: t, tone: name, prob: nil)) }
-                // 先出一条是一条：不等其余话术、更不等排序
+                // 先出一条是一条：不等其余档位、更不等排序
                 if !round.candidates.isEmpty { onPartial(round) }
             }
         }
