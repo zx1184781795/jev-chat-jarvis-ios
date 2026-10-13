@@ -1,0 +1,12 @@
+# 仓库统一用 LF。
+# 这台机器是 Windows，编辑器/工具默认可能写出 CRLF；一旦 CRLF 混进
+# `.github/workflows/*.yml` 或 `scripts/ci/*.sh`，轻则 commit 噪音，
+# 重则把 `run: |` 块标量的内容带进不可见的 \r，bash 报出莫名其妙的语法错。
+* text=auto eol=lf
+
+# 二进制产物不参与行尾转换
+*.png binary
+*.gif binary
+*.ipa binary
+*.car binary
+*.xcresult binary
