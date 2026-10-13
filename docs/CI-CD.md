@@ -79,9 +79,33 @@ scripts/ci/
 # 工程一致性（唯一不需要 Mac 的一项，也是最常挂的一项）
 python3 scripts/ci/verify_project.py
 
-# workflow 与脚本自查：YAML 解析 + run 块 bash 语法 + 裸标量陷阱 + 脚本语法
+# workflow 与脚本自查：YAML 解析 + 裸标量陷阱 + run 块 bash 语法 + 脚本语法
 # （改了 .github/workflows/*.yml 或 scripts/ci/* 之后务必跑一遍）
 python3 scripts/ci/check_workflows.py
+
+# 想要和 CI 完全一致，把 shellcheck 也带上
+python3 scripts/ci/check_workflows.py --shellcheck /path/to/shellcheck
+```
+
+### 为什么必须带 shellcheck
+
+ubuntu runner **自带 shellcheck**，actionlint 会自动调用它去 lint `run:` 块里的内嵌脚本，
+**并把任何发现（含 warning/info）都当错误**。本机没装 shellcheck 时 actionlint 是「干净」的 ——
+于是就出现「本地全绿、CI 全红」的假象。这个是实际踩过的坑（2026-10-13），
+`check_workflows.py` 现在会主动提醒你装。
+
+另外两个同源的坑，工具里已经处理掉了：
+
+- **`${{ }}` 要遮掉再交给 shellcheck**，否则 `${{ github.sha }}` 会被判成 SC2296
+  「Parameter expansions can't start with {」，满屏假警报。actionlint 也是这么做的。
+- **临时文件必须 `newline="\n"`**。Windows 上 Python 默认把 `\n` 翻成 `\r\n`，
+  shellcheck 会对每一行报 SC1017「Literal carriage return」。
+
+还有一个只有真踩过才知道的：**注释别以 `# shellcheck` 开头**。
+shellcheck 把任何 `# shellcheck ...` 当成指令解析，一句中文说明就能让构建挂掉：
+
+```
+SC1072: Expected '=' after directive key   ← error 级，直接红
 ```
 
 `verify_project.py` 每个 error 都会同时发一条 GitHub annotation。

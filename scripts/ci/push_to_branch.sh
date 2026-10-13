@@ -61,7 +61,7 @@ if [ -z "$(ls -A "$WORK" 2>/dev/null)" ]; then
   exit 1
 fi
 
-cd "$WORK"
+cd "$WORK" || { echo "!! 进不去临时目录 $WORK" >&2; exit 1; }
 git init -q
 git checkout -q -b "$BRANCH"
 git config user.name "ci-bot"
@@ -71,7 +71,7 @@ git commit -q -m "$MSG" || echo "!! 没有可提交的改动" >&2
 
 OK=0
 for i in 1 2 3 4 5; do
-  if git push -f "$REMOTE_URL" "$BRANCH" > /tmp/push-${BRANCH}.log 2>&1; then
+  if git push -f "$REMOTE_URL" "$BRANCH" > "/tmp/push-${BRANCH}.log" 2>&1; then
     OK=1
     break
   fi

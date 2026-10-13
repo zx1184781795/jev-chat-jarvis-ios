@@ -96,6 +96,9 @@ jobs:
             echo ""
             echo "########## 测试尝试：${label} ##########"
             echo "########## xcodebuild -project JevJarvis.xcodeproj -scheme JevJarvis -destination id=${UDID} $* test"
+            # ${ONLY} 故意不加引号：它要么是空、要么正好是一个 -only-testing: 参数，
+            # 靠词分割来实现「没指定就不传」。这是本脚本唯一需要词分割的地方。
+            # shellcheck disable=SC2086
             if xcodebuild -project JevJarvis.xcodeproj \
                  -scheme JevJarvis \
                  -destination "id=${UDID}" \
@@ -110,20 +113,19 @@ jobs:
           }
 
           WIN_LOG=""
-          WIN_BUNDLE=""
           MODE="failed"
 
           # 主尝试：用工程默认签名设置。模拟器目标 xcodebuild 会用 ad-hoc(-) 签名，
           # 这样 entitlements 里的 App Group 会被真正应用，测试环境更接近真机。
           if run_test "默认签名（App Group 生效）" \
                "$LOGDIR/attempt1.log" "${RUNNER_TEMP}/TestResults-1.xcresult"; then
-            MODE="default"; WIN_LOG="$LOGDIR/attempt1.log"; WIN_BUNDLE="${RUNNER_TEMP}/TestResults-1.xcresult"
+            MODE="default"; WIN_LOG="$LOGDIR/attempt1.log"
           elif run_test "关闭签名（CODE_SIGNING_ALLOWED=NO）" \
                "$LOGDIR/attempt2.log" "${RUNNER_TEMP}/TestResults-2.xcresult" \
                CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""; then
             # 兜底：签名环节卡住时完全关掉签名。此时 App Group 不会生效，
             # 但冷启动 / Tab 遍历 / 键盘拉起这些主断言仍可验证。
-            MODE="no-signing"; WIN_LOG="$LOGDIR/attempt2.log"; WIN_BUNDLE="${RUNNER_TEMP}/TestResults-2.xcresult"
+            MODE="no-signing"; WIN_LOG="$LOGDIR/attempt2.log"
           fi
 
           # 统一成 uitest.log 供后续步骤与 artifact 使用

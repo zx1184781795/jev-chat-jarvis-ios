@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -39,12 +40,29 @@ def fail(msg: str) -> None:
     print(f"::error title=workflow 自查::{msg}")
 
 
+def warn(msg: str) -> None:
+    print(f"  \u26a0\ufe0f  {msg}")
+
+
 def ok(msg: str) -> None:
     print(f"  \u2705 {msg}")
 
 
 def head(msg: str) -> None:
     print(f"\n=== {msg} ===")
+
+
+def read_text_lf(path: Path) -> tuple[str, bool]:
+    """读文本并把行尾统一成 LF，返回 (文本, 原文是否含 CR)。
+
+    为什么不能直接 read_text()：Windows 上 Python 的通用换行只把 \\r\\n 翻成 \\n，
+    **单独一个 \\r 会原样留下**。留一个 \\r 进 run 块，shellcheck 就会对几乎每一行
+    报 SC1017「Literal carriage return」—— 满屏假警报，真正的问题全被淹掉。
+    而 CI 的 Linux 上根本不会有这个现象。
+    """
+    raw = path.read_text(encoding="utf-8")
+    had_cr = "\r" in raw
+    return raw.replace("\r\n", "\n").replace("\r", "\n"), had_cr
 
 
 # ---------------------------------------------------------------- 1. YAML 解析
@@ -61,7 +79,12 @@ def check_yaml(files: list[Path]) -> None:
         return
 
     for f in files:
-        raw = f.read_text(encoding="utf-8")
+        raw, had_cr = read_text_lf(f)
+        if had_cr:
+            warn(
+                f"{f.name} 工作区副本含 CR（仓库约定纯 LF）。git 提交时会由 "
+                f".gitattributes 归一化，但本地检查会被 \\r 干扰，建议编辑器改成 LF"
+            )
         try:
             doc = yaml.safe_load(raw)
         except Exception as exc:  # noqa: BLE001
@@ -80,7 +103,7 @@ def check_plain_scalars(files: list[Path]) -> None:
     head("裸标量陷阱（值里含 ': ' 会被当成嵌套映射）")
     hits = 0
     for f in files:
-        lines = f.read_text(encoding="utf-8").split("\n")
+        lines = read_text_lf(f)[0].split("\n")
         in_block = False
         block_indent = 0
         for i, line in enumerate(lines, 1):
@@ -108,8 +131,16 @@ def check_plain_scalars(files: list[Path]) -> None:
 # ---------------------------------------------------------------- 3. run 块语法
 
 
+GHA_EXPR = re.compile(r"\$\{\{.*?\}\}")
+
+
 def extract_run_blocks(text: str) -> list[tuple[int, str]]:
-    """返回 [(起始行号, 脚本内容)]。"""
+    """返回 [(起始行号, 脚本内容)]。
+
+    顺带把 GitHub 表达式 `${{ ... }}` 遮成占位符：shellcheck 看到 `${{`
+    会报 SC2296（"Parameter expansions can't start with {"），而这是合法且
+    必须的 GitHub 语法。actionlint 也是这么干的，不遮就等于自造假警报。
+    """
     lines = text.split("\n")
     blocks: list[tuple[int, str]] = []
     i = 0
@@ -132,49 +163,90 @@ def extract_run_blocks(text: str) -> list[tuple[int, str]]:
             nonempty = [l for l in body if l.strip()]
             strip = min((len(l) - len(l.lstrip()) for l in nonempty), default=0)
             script = "\n".join(l[strip:] if len(l) >= strip else l for l in body)
-            blocks.append((i + 1, script))
+            blocks.append((i + 1, GHA_EXPR.sub("__GHA_EXPR__", script)))
             i = j
         elif rest:
-            blocks.append((i + 1, rest))
+            blocks.append((i + 1, GHA_EXPR.sub("__GHA_EXPR__", rest)))
             i += 1
         else:
             i += 1
     return blocks
 
 
-def check_run_blocks(files: list[Path]) -> None:
-    head("run 块 bash 语法")
+def check_run_blocks(files: list[Path], shellcheck: str | None = None) -> None:
+    """逐个 run 块做 bash 语法检查；给了 shellcheck 就再跑一遍 lint。
+
+    为什么必须能跑 shellcheck：ubuntu runner 上自带 shellcheck，
+    actionlint 会自动调用它去 lint run 块，**并把任何发现都当错误**。
+    本机没有 shellcheck 时 actionlint 是「干净」的，于是出现
+    「本地绿、CI 红」的假象。把 shellcheck 接进来，本地就能提前复现。
+    """
+    head("run 块 bash 语法" + (" + shellcheck" if shellcheck else ""))
     total = 0
     bad = 0
     for f in files:
-        for lineno, script in extract_run_blocks(f.read_text(encoding="utf-8")):
+        for lineno, script in extract_run_blocks(read_text_lf(f)[0]):
             total += 1
+            # newline="\n" 不能省：Windows 上默认会把 \n 翻成 \r\n，
+            # 于是 shellcheck 每一行都报 SC1017「Literal carriage return」——
+            # 全是假警报，而 CI 的 Linux 上根本不会出现，纯属自己给自己上强度。
             with tempfile.NamedTemporaryFile(
-                "w", suffix=".sh", delete=False, encoding="utf-8"
+                "w", suffix=".sh", delete=False, encoding="utf-8", newline="\n"
             ) as tf:
                 tf.write(script)
                 path = tf.name
             try:
-                r = subprocess.run(
-                    ["bash", "-n", path], capture_output=True, text=True
-                )
-            except FileNotFoundError:
-                print("  \u26a0\ufe0f  找不到 bash，跳过 run 块检查")
+                try:
+                    r = subprocess.run(
+                        ["bash", "-n", path], capture_output=True, text=True
+                    )
+                except FileNotFoundError:
+                    print("  \u26a0\ufe0f  找不到 bash，跳过 run 块检查")
+                    return
+                if r.returncode != 0:
+                    bad += 1
+                    fail(f"{f.name}:{lineno} run 块语法错误\n     {r.stderr.strip()}")
+
+                if shellcheck:
+                    # -s bash 必须带：actionlint 也是这么调 shellcheck 的。
+                    # 不带的话 run 块（没有 shebang）会先报 SC2148，且规则集不同。
+                    sc = subprocess.run(
+                        [shellcheck, "-s", "bash", "-S", "style", "-f", "gcc", path],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if sc.returncode != 0:
+                        bad += 1
+                        src = script.split("\n")
+                        for line in sc.stdout.strip().split("\n"):
+                            if not line.strip():
+                                continue
+                            # gcc 格式：<path>:<line>:<col>: <level>: <message> [SCxxxx]
+                            # 注意 path 在 Windows 上自带冒号（F:\...），
+                            # 所以不能用 [^:]+ 匹配路径，得让正则回溯着找。
+                            m = re.match(r"^.*?:(\d+):(\d+): (.+)$", line)
+                            if m:
+                                ln = int(m.group(1))
+                                srcline = (
+                                    src[ln - 1].strip()[:90] if ln <= len(src) else ""
+                                )
+                                fail(
+                                    f"{f.name}:{lineno}（块内第 {ln} 行）{m.group(3)}\n"
+                                    f"     \u2192 {srcline}"
+                                )
+                            else:
+                                fail(f"{f.name}:{lineno} shellcheck: {line}")
+            finally:
                 os.unlink(path)
-                return
-            if r.returncode != 0:
-                bad += 1
-                fail(f"{f.name}:{lineno} run 块语法错误\n     {r.stderr.strip()}")
-            os.unlink(path)
     if bad == 0:
-        ok(f"{total} 个 run 块语法均正确")
+        ok(f"{total} 个 run 块通过（bash -n{' + shellcheck' if shellcheck else ''}）")
 
 
 # ---------------------------------------------------------------- 4. 脚本语法
 
 
-def check_scripts(root: Path) -> None:
-    head("scripts/ci 语法")
+def check_scripts(root: Path, shellcheck: str | None = None) -> None:
+    head("scripts/ci 语法" + (" + shellcheck" if shellcheck else ""))
     sh_dir = root / "scripts/ci"
     if not sh_dir.is_dir():
         print("  \u26a0\ufe0f  没有 scripts/ci 目录，跳过")
@@ -184,8 +256,19 @@ def check_scripts(root: Path) -> None:
         r = subprocess.run(["bash", "-n", str(f)], capture_output=True, text=True)
         if r.returncode:
             fail(f"{f.name} bash 语法错误：{r.stderr.strip()}")
-        else:
-            ok(f"{f.name}")
+            continue
+        if shellcheck:
+            sc = subprocess.run(
+                [shellcheck, "-s", "bash", "-S", "warning", "-f", "gcc", str(f)],
+                capture_output=True,
+                text=True,
+            )
+            if sc.returncode != 0:
+                for line in sc.stdout.strip().split("\n"):
+                    if line.strip():
+                        fail(f"{f.name} shellcheck: {line}")
+                continue
+        ok(f"{f.name}")
 
     for f in sorted(sh_dir.glob("*.py")):
         src = f.read_text(encoding="utf-8")
@@ -206,6 +289,11 @@ def check_scripts(root: Path) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description="workflow 与脚本自查")
     ap.add_argument("--root", default=None)
+    ap.add_argument(
+        "--shellcheck",
+        default=None,
+        help="shellcheck 可执行文件路径。默认从 PATH 找；找不到就跳过 lint",
+    )
     args = ap.parse_args()
 
     root = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[2]
@@ -217,10 +305,18 @@ def main() -> int:
         print("::error title=workflow 自查::一个 workflow 都没找到")
         return 2
 
+    shellcheck = args.shellcheck or shutil.which("shellcheck")
+    if not shellcheck:
+        print(
+            "提示：没找到 shellcheck。CI 的 ubuntu runner 自带它，actionlint 会调用它\n"
+            "      并把任何发现都当错误 —— 本地没有就会「本地绿、CI 红」。\n"
+            "      装了再跑，或用 --shellcheck <路径> 指定。"
+        )
+
     check_yaml(files)
     check_plain_scalars(files)
-    check_run_blocks(files)
-    check_scripts(root)
+    check_run_blocks(files, shellcheck)
+    check_scripts(root, shellcheck)
 
     print("\n" + "=" * 56)
     if FAILED:

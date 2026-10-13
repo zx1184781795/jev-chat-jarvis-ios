@@ -61,9 +61,12 @@ jobs:
             python3 -c "import ast,sys; ast.parse(open(sys.argv[1],encoding='utf-8').read(), sys.argv[1])" "$f"
             echo "OK  $f"
           done
-          # shellcheck 在 ubuntu runner 上自带。只看 error 级，warning/info 不阻塞。
+          # 说明：shellcheck 在 ubuntu runner 上自带。
+          # 注意别把本行写成以 `# shellcheck` 开头的注释 —— shellcheck 会把
+          # 任何 `# shellcheck ...` 当成指令解析，中文说明直接报
+          # SC1072「Expected '=' after directive key」，而且它是 error 级。
           if command -v shellcheck >/dev/null 2>&1; then
-            shellcheck -S error scripts/ci/*.sh && echo "shellcheck 通过"
+            shellcheck -s bash -S warning scripts/ci/*.sh && echo "shellcheck 通过"
           fi
 
       # workflow 表达式写错（引用了不存在的 env、上下文用错）在 GitHub 上

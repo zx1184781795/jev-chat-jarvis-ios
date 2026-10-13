@@ -59,7 +59,7 @@ jobs:
           sw_vers
           xcodebuild -version
           xcode-select -p
-          ls /Applications | grep -i xcode || true
+          find /Applications -maxdepth 1 -name 'Xcode*.app' -print 2>/dev/null || true
           xcodebuild -showsdks | grep -i iphoneos || true
 
       - name: 列出工程可用的 target / scheme

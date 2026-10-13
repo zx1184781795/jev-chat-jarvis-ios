@@ -136,7 +136,9 @@ jobs:
             echo ""
             echo "## ${RANGE_DESC}"
             echo ""
-            git log --pretty='- %s (`%h`)' "$RANGE" | head -40
+            # 别在格式串里用反引号包 %h：shellcheck 会把反引号当成命令替换，
+            # 报 SC2016「Expressions don't expand in single quotes」。
+            git log --pretty='- %s (%h)' "$RANGE" | head -40
             echo ""
             echo "## 产物信息"
             echo ""
