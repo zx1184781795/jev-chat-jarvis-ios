@@ -1,0 +1,176 @@
+name: UI Tests (simulator)
+
+# 模拟器上跑 XCUITest：冷启动冒烟 / 四个 Tab 遍历 / 键盘扩展拉起。
+# 这三条覆盖的是「审核崩溃」类问题 —— 本地改完随手一跑就漏，必须自动化。
+#
+# 为什么**不**放进 ci.yml：
+#   AutoLaunchTests 要真的进系统设置添加第三方键盘、长按地球键选键盘、
+#   等键盘扩展冷启动。这条链路涉及 Settings/SpringBoard 两个系统 App 的
+#   UI 层级，天生易抖（苹果每次改系统 UI 都可能让选择器失效）。
+#   拿它当门禁会让「设置界面小改」这种无关提交也变红，最后大家就学会忽略红了。
+#   所以：独立工作流、按需触发、结果只做参考。
+#
+# 触发方式：每夜定时 / 手动 / 给 PR 打上 run-ui-tests 标签。
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: 模拟器机型（留空=自动挑一台可用的 iPhone）
+        type: string
+        default: ''
+      only_test:
+        description: 只跑某个测试方法（留空=全跑），例如 testColdLaunchSmoke
+        type: string
+        default: ''
+  schedule:
+    # 每天 UTC 20:00 = 北京时间次日 04:00
+    - cron: '0 20 * * *'
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: uitests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  uitest:
+    # labeled 事件对所有标签都会触发，这里只认 run-ui-tests
+    if: github.event_name != 'pull_request' || github.event.label.name == 'run-ui-tests'
+    name: 模拟器 UI 测试
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 打印工具链与可用模拟器
+        run: |
+          xcodebuild -version
+          echo "--- 可用的 iPhone 模拟器 ---"
+          xcrun simctl list devices available | grep -i iphone || true
+
+      # 机型名可能在未来镜像里改名（iPhone 16 -> iPhone 17…），所以动态取一台；
+      # 并且用 UDID 而不是名字定位 —— 多个 runtime 有同名机型时
+      # 用名字会报 "multiple matching destinations"。
+      - name: 挑选模拟器
+        id: pick
+        run: |
+          set -euo pipefail
+          LINE="$(xcrun simctl list devices available -j | python3 scripts/ci/pick_simulator.py "${{ inputs.device }}")"
+          UDID="${LINE%%$'\t'*}"
+          NAME="${LINE##*$'\t'}"
+          echo "挑中：${NAME} (${UDID})"
+          echo "udid=${UDID}" >> "$GITHUB_OUTPUT"
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: 跑 UI 测试
+        id: run
+        env:
+          UDID: ${{ steps.pick.outputs.udid }}
+          ONLY_TEST: ${{ inputs.only_test }}
+        run: |
+          set -uo pipefail
+          LOGDIR="${RUNNER_TEMP}/uitest-logs"
+          rm -rf "$LOGDIR" && mkdir -p "$LOGDIR"
+
+          # 先让模拟器就绪，减少首次启动超时
+          xcrun simctl boot "$UDID" 2>/dev/null || true
+          xcrun simctl bootstatus "$UDID" -b || true
+
+          ONLY=""
+          if [ -n "${ONLY_TEST:-}" ]; then
+            ONLY="-only-testing:JevJarvisUITests/${ONLY_TEST}"
+            echo "只跑：${ONLY_TEST}"
+          fi
+
+          # 每次尝试用**独立**日志与 result bundle。
+          # 共用一个日志会让兜底成功的那次最终 grep 仍命中断言的失败输出 —— 假红。
+          run_test() {
+            local label="$1" logfile="$2" bundle="$3"; shift 3
+            echo ""
+            echo "########## 测试尝试：${label} ##########"
+            echo "########## xcodebuild -project JevJarvis.xcodeproj -scheme JevJarvis -destination id=${UDID} $* test"
+            if xcodebuild -project JevJarvis.xcodeproj \
+                 -scheme JevJarvis \
+                 -destination "id=${UDID}" \
+                 -resultBundlePath "$bundle" \
+                 ${ONLY} \
+                 "$@" test > "$logfile" 2>&1; then
+              return 0
+            fi
+            echo "--- ${label} 失败，日志尾部 ---"
+            tail -30 "$logfile" || true
+            return 1
+          }
+
+          WIN_LOG=""
+          WIN_BUNDLE=""
+          MODE="failed"
+
+          # 主尝试：用工程默认签名设置。模拟器目标 xcodebuild 会用 ad-hoc(-) 签名，
+          # 这样 entitlements 里的 App Group 会被真正应用，测试环境更接近真机。
+          if run_test "默认签名（App Group 生效）" \
+               "$LOGDIR/attempt1.log" "${RUNNER_TEMP}/TestResults-1.xcresult"; then
+            MODE="default"; WIN_LOG="$LOGDIR/attempt1.log"; WIN_BUNDLE="${RUNNER_TEMP}/TestResults-1.xcresult"
+          elif run_test "关闭签名（CODE_SIGNING_ALLOWED=NO）" \
+               "$LOGDIR/attempt2.log" "${RUNNER_TEMP}/TestResults-2.xcresult" \
+               CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""; then
+            # 兜底：签名环节卡住时完全关掉签名。此时 App Group 不会生效，
+            # 但冷启动 / Tab 遍历 / 键盘拉起这些主断言仍可验证。
+            MODE="no-signing"; WIN_LOG="$LOGDIR/attempt2.log"; WIN_BUNDLE="${RUNNER_TEMP}/TestResults-2.xcresult"
+          fi
+
+          # 统一成 uitest.log 供后续步骤与 artifact 使用
+          [ -n "$WIN_LOG" ] && cp "$WIN_LOG" uitest.log || cat "$LOGDIR"/*.log > uitest.log 2>/dev/null || true
+          echo ">>> 结果：${MODE}"
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+
+          if [ "$MODE" = "failed" ]; then
+            grep -hE "error:|Testing failed|\*\* TEST FAILED \*\*" "$LOGDIR"/*.log 2>/dev/null | head -15 | while IFS= read -r line; do
+              echo "::error title=UI 测试::$line"
+            done || true
+            echo "::error title=UI 测试失败::两种签名模式都失败，见 artifact 里的日志"
+            exit 1
+          fi
+
+          # 只看**成功那次**的日志，避免兜底成功却因第一次的失败输出被判红
+          if grep -q "\*\* TEST FAILED \*\*" "$WIN_LOG"; then
+            echo "::warning title=UI 测试有断言失败::编译通过但用例红了，常见原因是系统设置 UI 改版导致选择器失效（非 App 缺陷）"
+            exit 1
+          fi
+          echo "测试全部通过（签名模式：${MODE}）"
+
+      - name: 上传测试产物
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uitest-${{ github.run_id }}
+          path: |
+            uitest.log
+            ${{ runner.temp }}/uitest-logs/
+            ${{ runner.temp }}/TestResults-*.xcresult
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: 汇总
+        if: always()
+        run: |
+          {
+            echo "### 模拟器 UI 测试"
+            echo ""
+            echo "- 机型：${{ steps.pick.outputs.name }}"
+            echo "- 签名模式：${{ steps.run.outputs.mode }}"
+            echo ""
+            echo "本工作流不阻塞合并 —— 它要遍历系统设置，抖动大多来自系统 UI 改版而非 App 缺陷。"
+            echo "失败时优先看 artifact 里的 \`uitest.log\` 与 \`TestResults.xcresult\`。"
+            echo ""
+            echo '```'
+            grep -E "Test Case .* (passed|failed)|Executed .* test" uitest.log 2>/dev/null | tail -20 || echo "(无测试摘要)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

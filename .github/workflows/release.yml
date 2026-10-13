@@ -1,0 +1,209 @@
+name: Release (unsigned ipa)
+
+# 出可安装的包，并把它送到「手机上一条链接就能下」的地方。
+#
+# 为什么是未签名 ipa：免费 Apple ID 的签名只能在你自己机器上做
+# （证书和私钥出不去，也不该进 CI）。所以 CI 负责「编译 + 打包 + 分发」，
+# 签名留给 Windows 上的 Sideloadly / 或者手机上的 Feather、ESign、SideStore。
+# 全程不需要 Apple 付费会员。
+#
+# 产物去向：
+#   ① GitHub Release  —— 打 tag 时自动创建，挂 ipa + build-info.txt + build.log
+#   ② builds 分支     —— 每次覆盖，一条 raw 链接 Safari 直接下载（免电脑签名的入口）
+#   ③ ci-log 分支     —— 构建日志，方便没有 Mac 的人远程诊断
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 发布用的 tag（手动触发且勾了「创建 Release」时必填，例如 v0.1.0）
+        type: string
+        default: ''
+      uniquify_bundle_id:
+        description: 把 Bundle ID / App Group 改写成本仓库所有者的前缀（避免撞上原作者已占用的 App ID）
+        type: boolean
+        default: true
+      adhoc_sign:
+        description: 做 ad-hoc 签名，把 App Group 权限写进签名（提升重签后键盘读到配置的成功率）
+        type: boolean
+        default: true
+      push_builds_branch:
+        description: 把 ipa 推到 builds 分支（手机端免登录下载）
+        type: boolean
+        default: true
+      publish_release:
+        description: 创建 GitHub Release（打 tag 触发时自动为真）
+        type: boolean
+        default: false
+
+permissions:
+  contents: write  # 推 builds/ci-log 分支 + 建 Release
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false  # 发布不取消：中途取消可能留下半个 Release
+
+jobs:
+  release:
+    name: 构建并发布
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      CONFIG: Release
+      ADHOC_SIGN: ${{ github.event_name == 'push' && '1' || (inputs.adhoc_sign && '1' || '0') }}
+      UNIQUIFY: ${{ github.event_name == 'push' && '1' || (inputs.uniquify_bundle_id && '1' || '0') }}
+      PUSH_BUILDS: ${{ github.event_name == 'push' && '1' || (inputs.push_builds_branch && '1' || '0') }}
+      PUBLISH_RELEASE: ${{ github.event_name == 'push' && '1' || (inputs.publish_release && '1' || '0') }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 生成 changelog 要完整历史
+
+      - name: 解析发布参数
+        id: params
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="${{ inputs.tag }}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG:-（不建 Release）}"
+          echo "uniquify=${UNIQUIFY} adhoc=${ADHOC_SIGN} push_builds=${PUSH_BUILDS} publish=${PUBLISH_RELEASE}"
+          if [ "${PUBLISH_RELEASE}" = "1" ] && [ -z "$TAG" ]; then
+            echo "::error title=发布参数::勾了「创建 Release」但没填 tag"
+            exit 1
+          fi
+
+      - name: 打印工具链版本
+        run: |
+          sw_vers
+          xcodebuild -version
+
+      # App ID 在 Apple 侧全局唯一。fork 后直接编译签名会撞上原作者已注册的
+      # com.jevchat.jarvis，所以构建前把自己的前缀换进去。
+      # 用 repository_owner 而不是 actor：不管是谁触发的，都该用仓库所有者的前缀。
+      - name: 改写 Bundle ID 与 App Group
+        if: env.UNIQUIFY == '1'
+        env:
+          HANDLE: ${{ github.repository_owner }}
+        run: python3 scripts/ci/uniquify_bundle_id.py --handle "$HANDLE"
+
+      - name: 编译 + ad-hoc 签名 + 打包
+        run: bash scripts/ci/build_ipa.sh
+
+      - name: 把 ipa 推到 builds 分支（手机端可直接下载）
+        if: env.PUSH_BUILDS == '1'
+        continue-on-error: true  # 搬运失败不该把绿色构建搞红；成败会写进 build.log
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/ci/push_to_branch.sh builds JevJarvis-unsigned.ipa build-info.txt
+
+      - name: 确保日志文件存在
+        if: always()
+        run: |
+          [ -s build.log ] || echo "(本次没有产生 build.log)" > build.log
+          [ -f build-info.txt ] || echo "(本次没有产生 build-info.txt)" > build-info.txt
+
+      - name: 把构建日志推到 ci-log 分支
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/ci/push_to_branch.sh ci-log build.log build-info.txt JevJarvis-unsigned.ipa
+
+      - name: 生成 Release 说明
+        if: env.PUBLISH_RELEASE == '1'
+        env:
+          TAG: ${{ steps.params.outputs.tag }}
+        run: |
+          set -euo pipefail
+          PREV="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
+          if [ -n "$PREV" ]; then
+            RANGE="${PREV}..${TAG}"
+            RANGE_DESC="自 ${PREV} 以来的改动"
+          else
+            RANGE="HEAD"
+            RANGE_DESC="首个发布"
+          fi
+          {
+            echo "未签名 ipa —— 用 Sideloadly（Windows）或 Feather / ESign / SideStore（手机）签上你自己的 Apple ID 即可安装。"
+            echo ""
+            echo "## ${RANGE_DESC}"
+            echo ""
+            git log --pretty='- %s (`%h`)' "$RANGE" | head -40
+            echo ""
+            echo "## 产物信息"
+            echo ""
+            echo '```'
+            cat build-info.txt
+            echo '```'
+            echo ""
+            echo "## 安装提示"
+            echo ""
+            echo "- 免费 Apple ID **不支持 App Group**：装好后 App 里填的 Key 键盘读不到。"
+            echo "  走键盘内直接填（长按键盘 → 🔑 面板），或在 App「模型」页复制配置串后粘贴到键盘。"
+            echo "- 免费签名 7 天过期，过期后重新用同一个 ipa 签一次即可，不必重新编译。"
+          } > RELEASE_NOTES.md
+          echo "--- Release 说明预览 ---"
+          head -30 RELEASE_NOTES.md
+
+      - name: 创建 / 更新 GitHub Release
+        if: env.PUBLISH_RELEASE == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.params.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，覆盖产物"
+            gh release upload "$TAG" JevJarvis-unsigned.ipa build-info.txt build.log --clobber
+            gh release edit "$TAG" --notes-file RELEASE_NOTES.md
+          else
+            gh release create "$TAG" \
+              --title "Jev Jarvis ${TAG}" \
+              --notes-file RELEASE_NOTES.md \
+              JevJarvis-unsigned.ipa build-info.txt build.log
+          fi
+
+      - name: 上传构建产物（Actions 内也能下载，作为备份路径）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ github.ref_name }}-${{ github.run_id }}
+          path: |
+            JevJarvis-unsigned.ipa
+            build-info.txt
+            build.log
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: 汇总
+        if: always()
+        env:
+          TAG: ${{ steps.params.outputs.tag }}
+        run: |
+          {
+            echo "### 发布结果"
+            echo ""
+            if [ -f build-info.txt ]; then
+              echo '```'
+              cat build-info.txt
+              echo '```'
+            fi
+            echo ""
+            echo "| 去向 | 链接 |"
+            echo "|---|---|"
+            if [ "${PUSH_BUILDS:-}" != "0" ]; then
+              echo "| 手机直接下载 | https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/builds/JevJarvis-unsigned.ipa |"
+            fi
+            echo "| 构建日志 | https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/ci-log/build.log |"
+            if [ -n "$TAG" ] && [ "${PUBLISH_RELEASE}" = "1" ]; then
+              echo "| GitHub Release | https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG} |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

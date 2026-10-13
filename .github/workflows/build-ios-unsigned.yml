@@ -4,6 +4,12 @@ name: Build iOS IPA (unsigned)
 # 再拿回 Windows 用 Sideloadly 签上自己的 Apple ID 装进 iPhone。
 #
 # 不做任何签名/公证，因此不需要证书、不需要 Apple 账号、不需要付费会员。
+#
+# 这是「任何人 fork 后一键出包」的自助入口，所以它的编译/打包逻辑与
+# release.yml 共用 scripts/ci/build_ipa.sh —— 一套逻辑，两处触发，
+# 不存第二份拷贝（否则改一处忘一处，迟早漂移）。
+#
+# 详细图文手册见 docs/CLOUD-BUILD.md。
 
 on:
   workflow_dispatch:
@@ -26,9 +32,10 @@ on:
   push:
     paths:
       - '.github/workflows/build-ios-unsigned.yml'
+      - 'scripts/ci/**'   # 脚本改了也要重跑，否则改坏了没人知道
 
 permissions:
-  contents: write   # 失败时要把构建日志推回 ci-log 分支，方便没有 Mac 的人远程诊断
+  contents: write   # 要把产物 / 日志推到 builds、ci-log 分支
 
 jobs:
   build:
@@ -37,6 +44,8 @@ jobs:
 
     env:
       CONFIG: ${{ inputs.configuration || 'Release' }}
+      ADHOC_SIGN: ${{ github.event_name == 'push' && '1' || (inputs.adhoc_sign && '1' || '0') }}
+      UNIQUIFY: ${{ github.event_name == 'push' && '1' || (inputs.uniquify_bundle_id && '1' || '0') }}
 
     steps:
       - name: 检出代码
@@ -54,241 +63,63 @@ jobs:
           xcodebuild -showsdks | grep -i iphoneos || true
 
       - name: 列出工程可用的 target / scheme
-        run: |
-          xcodebuild -list -project JevJarvis.xcodeproj || true
+        run: xcodebuild -list -project JevJarvis.xcodeproj || true
 
+      # App ID 在 Apple 侧全局唯一。直接用原作者的前缀会撞上他已注册的
+      # com.jevchat.jarvis，签名时报 "identifier is not available"。
+      # 这里换成你自己的；改完脚本会做一致性断言，不一致就停在构建之前。
       - name: 改写 Bundle ID 与 App Group
-        if: ${{ inputs.uniquify_bundle_id || github.event_name == 'push' }}
+        if: env.UNIQUIFY == '1'
         env:
-          GH_ACTOR: ${{ github.actor }}
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import os, pathlib, re
+          HANDLE: ${{ github.actor }}
+        run: python3 scripts/ci/uniquify_bundle_id.py --handle "$HANDLE"
 
-          handle = re.sub(r'[^0-9A-Za-z]', '', os.environ.get('GH_ACTOR', '')).lower() or 'dev'
-          new = f'com.{handle}.jevjarvis'
-          old = 'com.jevchat.jarvis'
-          print(f'用户名 slug: {handle}')
-          print(f'改写前: {old} / {old}.keyboard / group.{old}')
+      - name: 工程一致性校验
+        run: python3 scripts/ci/verify_project.py
 
-          # Shared/JevModel.swift 里硬编码了 App Group 字符串，不同步改的话
-          # App 会往一个自己没有权限的 UserDefaults suite 写配置，键盘读不到 —— 包等于废的。
-          # UITests 里也有一处 plist 路径引用，一并改掉保持一致。
-          targets = (
-              'JevJarvis.xcodeproj/project.pbxproj',
-              'project.yml',
-              'App/JevJarvis.entitlements',
-              'Keyboard/JevKeyboard.entitlements',
-              'Shared/JevModel.swift',
-              'UITests/AutoLaunchTests.swift',
-          )
-
-          total = 0
-          for target in targets:
-              path = pathlib.Path(target)
-              text = path.read_text(encoding='utf-8')
-              count = text.count(old)
-              if count:
-                  path.write_text(text.replace(old, new), encoding='utf-8')
-              total += count
-              print(f'  {target}: {count} 处')
-          print(f'改写后: {new} / {new}.keyboard / group.{new}')
-          assert total > 0, f'没找到任何 {old}，改写逻辑可能已失效'
-
-          # 一致性校验：Swift 里用的 App Group 必须和 entitlements 里申请的一致
-          swift = pathlib.Path('Shared/JevModel.swift').read_text(encoding='utf-8')
-          swift_group = re.search(r'appGroupID\s*=\s*"([^"]+)"', swift)
-          ent_group = re.search(r'<string>(group\.[^<]+)</string>',
-                                pathlib.Path('App/JevJarvis.entitlements').read_text(encoding='utf-8'))
-          assert swift_group and ent_group, 'App Group 字符串提取失败'
-          if swift_group.group(1) != ent_group.group(1):
-              raise SystemExit(
-                  f'App Group 不一致：Swift={swift_group.group(1)} entitlements={ent_group.group(1)}')
-          print(f'一致性校验通过：Swift 与 entitlements 都是 {swift_group.group(1)}')
-          PY
-          echo "--- pbxproj 里的 Bundle ID ---"
-          grep -n 'PRODUCT_BUNDLE_IDENTIFIER' JevJarvis.xcodeproj/project.pbxproj || true
-          echo "--- entitlements 里的 App Group ---"
-          grep -n 'group\.' App/JevJarvis.entitlements Keyboard/JevKeyboard.entitlements || true
-
-      - name: 编译（完全不签名）
-        run: |
-          set -uo pipefail
-          : > build.log
-          mark() { echo "$*" | tee -a build.log; }
-
-          attempt() {
-            local label="$1"; shift
-            mark ""
-            mark "########## 编译尝试：${label} ##########"
-            mark "########## xcodebuild -project JevJarvis.xcodeproj -sdk iphoneos -configuration ${CONFIG} CODE_SIGNING_ALLOWED=NO $* build"
-            xcodebuild -project JevJarvis.xcodeproj -sdk iphoneos \
-              -configuration "${CONFIG}" \
-              CODE_SIGNING_ALLOWED=NO \
-              "$@" build >> build.log 2>&1
-          }
-
-          # 主命令：-scheme + -derivedDataPath。
-          # 注意别用 -target 配 -derivedDataPath —— xcodebuild 会直接报
-          # "The flag -scheme, -testProductsPath, or -xctestrun is required
-          #  when specifying -derivedDataPath"（2026-09-30 实测踩过）。
-          # -derivedDataPath 的好处是产物路径固定，后面定位 .app 不用猜 DerivedData。
-          if attempt "主命令：-scheme JevJarvis + -derivedDataPath build/dd" \
-               -scheme JevJarvis -derivedDataPath build/dd; then
-            mark ">>> 结果：编译成功（-scheme 主命令）"
-          # 兜底：作者 README / AGENTS.md 里的原始写法（-target，产物落在 DerivedData）
-          elif attempt "兜底：作者官方写法 -target JevJarvis" -target JevJarvis; then
-            mark ">>> 结果：编译成功（-target 兜底，产物在 DerivedData）"
-          else
-            mark ">>> 结果：两种写法都失败"
-            exit 1
-          fi
-
-      - name: 定位 .app 并确认键盘扩展已嵌入
-        run: |
-          set -euo pipefail
-          APP=$(find build/dd/Build/Products -maxdepth 2 -name 'JevJarvis.app' -type d | head -1 || true)
-          if [ -z "$APP" ]; then
-            APP=$(find "$HOME/Library/Developer/Xcode/DerivedData" -name 'JevJarvis.app' \
-                  -path "*${CONFIG}-iphoneos*" -type d | head -1 || true)
-          fi
-          [ -n "$APP" ] || { echo "构建产物里找不到 JevJarvis.app"; exit 1; }
-          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
-          ls -la "$APP"
-          echo "--- PlugIns（键盘扩展必须在这一层）---"
-          ls -la "$APP/PlugIns"
-          [ -d "$APP/PlugIns/JevKeyboard.appex" ] || { echo "键盘扩展没被嵌入，包是废的"; exit 1; }
-
-      - name: ad-hoc 签名（写入 App Group 权限）
-        if: ${{ inputs.adhoc_sign || github.event_name == 'push' }}
-        run: |
-          set -euo pipefail
-          codesign -f -s - --timestamp=none \
-            --entitlements Keyboard/JevKeyboard.entitlements \
-            "$APP_PATH/PlugIns/JevKeyboard.appex"
-          codesign -f -s - --timestamp=none \
-            --entitlements App/JevJarvis.entitlements \
-            "$APP_PATH"
-          echo "--- 校验外层签名里的权限 ---"
-          codesign -d --entitlements - "$APP_PATH" 2>&1 || true
-
-      - name: 打包成 ipa 并记录信息
-        run: |
-          set -euo pipefail
-          rm -rf ipa && mkdir -p ipa/Payload
-          cp -R "$APP_PATH" ipa/Payload/
-          (cd ipa && zip -qry ../JevJarvis-unsigned.ipa Payload)
-          ls -lh JevJarvis-unsigned.ipa
-
-          PB=/usr/libexec/PlistBuddy
-          APP_ID=$($PB -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")
-          KB_ID=$($PB -c 'Print :CFBundleIdentifier' "$APP_PATH/PlugIns/JevKeyboard.appex/Info.plist")
-          VER=$($PB -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")
-          BLD=$($PB -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")
-          MIN=$($PB -c 'Print :MinimumOSVersion' "$APP_PATH/Info.plist" 2>/dev/null || echo '16.0')
-          # 直接从源文件读，别用 Bundle ID 做字符串推导（关掉改写开关时会算错）
-          APP_GROUP=$(sed -n 's/.*<string>\(group\.[^<]*\)<\/string>.*/\1/p' App/JevJarvis.entitlements | head -1)
-
-          {
-            echo "构建时间: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-            echo "提交: ${{ github.sha }}"
-            echo "配置: ${CONFIG}"
-            echo "宿主 App Bundle ID : ${APP_ID}"
-            echo "键盘扩展 Bundle ID: ${KB_ID}"
-            echo "App Group: ${APP_GROUP}"
-            echo "主版本: ${VER} (build ${BLD})"
-            echo "最低系统: iOS ${MIN}"
-            echo ""
-            echo "Sideloadly 里 Bundle ID 会自动读出，通常不用手填。"
-            echo "App 和键盘扩展必须共用同一个 App Group，上面这行就是它。"
-            echo ""
-            echo "ipa SHA256:"
-            shasum -a 256 JevJarvis-unsigned.ipa | awk '{print "  " $1}'
-          } | tee build-info.txt
-
-      - name: 上传产物
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: JevJarvis-unsigned-ipa
-          path: |
-            JevJarvis-unsigned.ipa
-            build-info.txt
-            build.log
-          if-no-files-found: error
-          retention-days: 30
+      - name: 编译 + ad-hoc 签名 + 打包
+        run: bash scripts/ci/build_ipa.sh
 
       # 免电脑签名（Feather / ESign / SideStore / TrollStore）都要求「ipa 先在手机上」。
       # Actions 产物下载必须登录 GitHub，手机浏览器上很别扭；推到 builds 分支后
       # 一条 raw 链接 Safari 直接就能下。
-      # continue-on-error：搬运文件失败不该把绿色构建搞红。
       - name: 把 ipa 推到 builds 分支（手机端可直接下载）
         if: success()
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -uo pipefail
-          OUT=/tmp/ipa-out
-          rm -rf "$OUT" && mkdir -p "$OUT"
-          cp JevJarvis-unsigned.ipa "$OUT"/ || echo "!! ipa 复制失败"
-          [ -f build-info.txt ] && cp build-info.txt "$OUT"/ || echo "!! build-info.txt 缺失"
-          cd "$OUT"
-          git init -q
-          git checkout -q -b builds
-          git config user.name "ci-build"
-          git config user.email "ci-build@users.noreply.github.com"
-          git add -A -f
-          git commit -q -m "build: ${GITHUB_SHA:0:8}" || echo "!! 没有可提交的改动"
-          echo "本地提交: $(git log --oneline -1)"
-          # 之前这一步失败会被 continue-on-error 静默掉（构建仍是绿的但手机端拿到旧包）。
-          # 现在：重试 5 次，并把成功/失败与错误原文一并写进 build.log（ci-log 分支可读）。
-          OK=0
-          for i in 1 2 3 4 5; do
-            if git push -f \
-              "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" builds \
-              > /tmp/push-builds.log 2>&1; then
-              OK=1
-              break
-            fi
-            echo "第 $i 次推送失败，重试…"
-            tail -5 /tmp/push-builds.log
-            sleep 6
-          done
-          {
-            echo ""
-            echo ">>> builds 分支推送: $([ "$OK" = "1" ] && echo OK || echo FAILED) (run=${GITHUB_RUN_ID} sha=${GITHUB_SHA:0:8})"
-            [ -f /tmp/push-builds.log ] && tail -25 /tmp/push-builds.log
-          } >> "$GITHUB_WORKSPACE/build.log" 2>/dev/null || true
-          if [ "$OK" = "1" ]; then
-            echo "已推送 ipa 到 builds 分支（每次覆盖，只保留最新一份）"
-            echo "手机 Safari 直接打开这个地址即可下载："
-            echo "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/builds/JevJarvis-unsigned.ipa"
-          else
-            echo "!! builds 分支推送失败 —— 手机端会拿到旧包，请看 ci-log 分支的尾部"
-          fi
+        run: bash scripts/ci/push_to_branch.sh builds JevJarvis-unsigned.ipa build-info.txt
 
       # 没有 Mac 的人看不到 Actions 日志（下载日志要登录 GitHub）。
       # 把日志推回一个分支，任何人一条 curl 就能读，排查不用来回问。
-      # continue-on-error：这一步纯粹是搬运日志，绝不能因为它把绿色的构建搞红。
+      - name: 确保日志文件存在
+        if: always()
+        run: |
+          [ -s build.log ] || echo "(本次没有产生 build.log)" > build.log
+          [ -f build-info.txt ] || echo "(本次没有产生 build-info.txt)" > build-info.txt
+
       - name: 把构建日志推到 ci-log 分支（便于远程诊断）
         if: always()
         continue-on-error: true
-        run: |
-          set -uo pipefail
-          [ -s build.log ] || echo "(本次没有产生 build.log)" > build.log
-          [ -f build-info.txt ] || echo "(本次没有产生 build-info.txt)" > build-info.txt
-          git config user.name "ci-diagnostics"
-          git config user.email "ci-diagnostics@users.noreply.github.com"
-          git checkout -B ci-log
-          # ipa 顺带也放这里：builds 分支万一推失败，手机端还有个备用下载地址
-          # https://raw.githubusercontent.com/<owner>/<repo>/ci-log/JevJarvis-unsigned.ipa
-          git add -f build.log build-info.txt
-          if [ -f JevJarvis-unsigned.ipa ]; then git add -f JevJarvis-unsigned.ipa; fi
-          git commit -q -m "ci: 构建日志 run=${GITHUB_RUN_ID} sha=${GITHUB_SHA:0:8}" || true
-          git push -f origin ci-log && echo "日志已推送到 ci-log 分支"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/ci/push_to_branch.sh ci-log build.log build-info.txt JevJarvis-unsigned.ipa
 
-# build trigger: appgroup-diagnostics 0e912c3
+      - name: 汇总
+        if: always()
+        run: |
+          {
+            echo "### 未签名 ipa"
+            echo ""
+            if [ -f build-info.txt ]; then
+              echo '```'
+              cat build-info.txt
+              echo '```'
+            fi
+            echo ""
+            echo "手机 Safari 直接下载："
+            echo "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/builds/JevJarvis-unsigned.ipa"
+          } >> "$GITHUB_STEP_SUMMARY"
+
 # build 2026-10-01 r7: 面板去输入框改粘贴流（键盘扩展无 first responder）+ frame 布局防塌缩
 # build 2026-10-09 r8: 军师推演集成（利弊推演 + 稳健/会撩/强势三档，开关走配置串与键盘本地面板）

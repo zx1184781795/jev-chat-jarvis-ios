@@ -1,0 +1,167 @@
+name: CI
+
+# 质量门禁。跑在所有 PR 与 master/main 的推送上，回答一个问题：
+# 「这个提交能不能编出包、装上去还能用？」
+#
+# 分三层，从便宜到贵，便宜的先跑，贵的不跑无意义的：
+#   ① 工程一致性（ubuntu，~20 秒）—— 静态检查，抓「能编译但装了没用」的配置不一致
+#   ② 逻辑回归（macOS，~1 分钟）—— PromptCheck，纯 Swift，不碰模拟器
+#   ③ 无签名构建（macOS，~3 分钟）—— 真的编一遍 + ad-hoc 签名 + 打包，
+#      断言键盘扩展嵌进去了、App Group 进了签名
+#
+# 模拟器 UI 测试**不在**这里 —— 它要遍历系统设置，天生易抖，
+# 放在 ui-tests.yml 里按需跑，不拖累门禁。
+
+on:
+  push:
+    branches: [master, main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'marketing/**'
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+# 同一个分支连续推送时，取消上一次还没跑完的 —— 省 runner 分钟数
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------- ① 静态一致性
+  project-check:
+    name: 工程一致性
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # 纯 Python 标准库，不需要 M 芯片也不需要 Xcode，放 ubuntu 上跑最便宜
+      - name: 校验 Bundle ID / App Group / 源文件登记 / Info.plist
+        run: python3 scripts/ci/verify_project.py
+
+      - name: 校验脚本语法
+        run: |
+          set -euo pipefail
+          echo "--- bash 语法 ---"
+          for f in scripts/ci/*.sh; do
+            bash -n "$f"
+            echo "OK  $f"
+          done
+          echo "--- python 语法 ---"
+          # 用 ast.parse 而不是 py_compile：后者会在仓库里留 __pycache__
+          for f in scripts/ci/*.py; do
+            python3 -c "import ast,sys; ast.parse(open(sys.argv[1],encoding='utf-8').read(), sys.argv[1])" "$f"
+            echo "OK  $f"
+          done
+          # shellcheck 在 ubuntu runner 上自带。只看 error 级，warning/info 不阻塞。
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck -S error scripts/ci/*.sh && echo "shellcheck 通过"
+          fi
+
+      # workflow 表达式写错（引用了不存在的 env、上下文用错）在 GitHub 上
+      # 往往只表现为「某个 step 莫名不执行」，很难 debug；块标量里嵌脚本的缩进
+      # 陷阱更是会报出与真实原因毫不相干的错。这些静态就能查出来。
+      - name: 自查 workflow 与脚本
+        run: python3 scripts/ci/check_workflows.py
+
+      # actionlint 是 workflow 的语义检查，比 YAML 解析严得多
+      # （比如 `if:` 里引用了不存在的 context 会直接报错）
+      - name: 校验 workflow 语义（actionlint）
+        run: |
+          set -uo pipefail
+          if ! bash <(curl -sSf https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash); then
+            echo "::warning title=actionlint::下载失败，跳过 workflow 语义检查"
+            exit 0
+          fi
+          ./actionlint -color
+
+  # ---------------------------------------------------------------- ② 逻辑回归
+  logic:
+    name: 逻辑回归 (PromptCheck)
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 打印工具链版本
+        run: |
+          xcodebuild -version
+          swift --version
+
+      # PromptCheck 是纯逻辑回归：URL 拼接、候选清洗、prompt 占位符、风险映射。
+      # 不依赖模拟器与键盘环境，秒级跑完 —— 这是本仓库性价比最高的一层测试。
+      - name: 编译并运行共享逻辑回归
+        run: |
+          set -euo pipefail
+          swiftc -o "$RUNNER_TEMP/jevcheck" tools/PromptCheck/main.swift Shared/*.swift
+          "$RUNNER_TEMP/jevcheck"
+
+      - name: 失败时输出诊断
+        if: failure()
+        run: echo "::error title=逻辑回归失败::PromptCheck 断言未通过，详见上方「编译并运行共享逻辑回归」步骤输出"
+
+  # ---------------------------------------------------------------- ③ 构建
+  build:
+    name: 无签名构建
+    runs-on: macos-15
+    timeout-minutes: 45
+    needs: project-check  # 静态检查 20 秒就能挂掉的话，没必要花 macOS runner
+    env:
+      CONFIG: Release
+      # 在 CI 里也走一遍 ad-hoc 签名，是为了验证 entitlements 真能写进签名。
+      # 这一步失败在本地很难发现（Xcode 照样出包），但装到手机上键盘就是读不到配置。
+      ADHOC_SIGN: "1"
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 打印工具链版本
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i iphoneos || true
+
+      - name: 列出工程可用的 target / scheme
+        run: xcodebuild -list -project JevJarvis.xcodeproj || true
+
+      - name: 编译 + ad-hoc 签名 + 打包
+        run: bash scripts/ci/build_ipa.sh
+
+      - name: 上传构建日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-build-log-${{ github.sha }}
+          path: |
+            build.log
+            build-info.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: 汇总
+        if: always()
+        run: |
+          {
+            echo "### 无签名构建"
+            echo ""
+            if [ -f build-info.txt ]; then
+              echo '```'
+              cat build-info.txt
+              echo '```'
+            else
+              echo "构建未产出 build-info.txt，见上方步骤与 artifact 里的 build.log"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
