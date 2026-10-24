@@ -122,17 +122,24 @@ final class AutoLaunchTests: XCTestCase {
 
     /// 读模拟器上 App Group 容器的键盘状态(runner 在模拟器内,HOME 的三级上级即设备 data 目录):
     /// kbstatus.lastSeen 在最近 60 秒内 = 键盘扩展的 viewDidAppear 真的跑过且没崩。
+    ///
+    /// 注意不能写死 plist 文件名:CI 的 uniquify_bundle_id.py 会把 App Group 连同
+    /// Bundle ID 一起改写(group.com.jevchat.jarvis -> group.com.zx1184781795.jevjarvis),
+    /// 文件名跟着 group 名走。所以这里扫所有 group.*.plist,拿得到 kbstatus 的那个就是。
     private func keyboardStatusFresh() -> Bool {
         guard let home = ProcessInfo.processInfo.environment["HOME"] else { return false }
         let appGroupRoot = home + "/../../../Shared/AppGroup"
         guard let groups = try? FileManager.default.contentsOfDirectory(atPath: appGroupRoot) else { return false }
         for g in groups {
-            let plist = appGroupRoot + "/\(g)/Library/Preferences/group.com.jevchat.jarvis.plist"
-            guard let data = FileManager.default.contents(atPath: plist),
-                  let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-                  let status = dict["jev.kbstatus.v1"] as? Data,
-                  let obj = try? JSONDecoder().decode(KeyboardStatusDTO.self, from: status) else { continue }
-            return Date().timeIntervalSince(obj.lastSeen) < 60
+            let prefs = appGroupRoot + "/\(g)/Library/Preferences"
+            guard let files = try? FileManager.default.contentsOfDirectory(atPath: prefs) else { continue }
+            for file in files where file.hasPrefix("group.") && file.hasSuffix(".plist") {
+                guard let data = FileManager.default.contents(atPath: prefs + "/\(file)"),
+                      let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+                      let status = dict["jev.kbstatus.v1"] as? Data,
+                      let obj = try? JSONDecoder().decode(KeyboardStatusDTO.self, from: status) else { continue }
+                if Date().timeIntervalSince(obj.lastSeen) < 60 { return true }
+            }
         }
         return false
     }
@@ -180,6 +187,12 @@ final class AutoLaunchTests: XCTestCase {
 
         // 找一行并点击:先 staticTexts 后 cells,均带滚动重试;支持多语言标签。
         // 设置会恢复上次的滚动位置:先回顶部再向下扫。失败返回 false 由调用方决定兜底。
+        //
+        // tap 前必须确认 Settings 还在前台:CI 模拟器上它会被系统回收/未就绪,
+        // 带着旧元素快照去 tap 直接报
+        // "Failed to tap ... application com.apple.Preferences is not running"
+        // —— 2026-10-14 起的夜跑 11 连败全部栽在这一行(AutoLaunchTests.swift:196)。
+        // 被回收就重新拉起,再从当前页面重新定位一轮。
         @discardableResult
         func tapRowOptional(containing texts: [String], in app: XCUIApplication, timeout: TimeInterval = 10) -> Bool {
             let orClauses = texts.map { _ in "SELF CONTAINS %@" }.joined(separator: " OR ")
@@ -188,15 +201,24 @@ final class AutoLaunchTests: XCTestCase {
                 let t = app.staticTexts.matching(pred).firstMatch
                 return t.exists ? t : app.cells.matching(pred).firstMatch
             }
-            app.swipeDown()
-            app.swipeDown()
-            let deadline = Date().addingTimeInterval(timeout)
-            var el = query()
-            while !el.exists && Date() < deadline {
-                app.swipeUp()
-                el = query()
+            func locate() -> XCUIElement? {
+                app.swipeDown()
+                app.swipeDown()
+                let deadline = Date().addingTimeInterval(timeout)
+                var el = query()
+                while !el.exists && Date() < deadline {
+                    app.swipeUp()
+                    el = query()
+                }
+                return el.exists ? el : nil
             }
-            guard el.exists else { return false }
+            guard var el = locate() else { return false }
+            if app.state != .runningForeground {
+                app.launch()          // Settings 被系统回收过:重新拉起会回到根页面
+                sleep(2)
+                guard let relaunched = locate() else { return false }
+                el = relaunched
+            }
             el.tap()
             return true
         }
